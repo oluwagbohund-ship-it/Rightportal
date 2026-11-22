@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none" role="img" aria-label="Dave Timi EdTech Systems Monogram">
+  <!-- Digital knowledge spine bar -->
+  <rect x="6" y="10" width="16" height="5.5" rx="1.5" fill="#1E3A8A" />
+  <!-- Geometric Letter D -->
+  <path fill-rule="evenodd" clip-rule="evenodd" d="M6 19.5H23.5C33.4 19.5 39.5 25.8 39.5 36.75C39.5 47.7 33.4 54 23.5 54H6V19.5ZM14.5 27.5V46H22.8C27.8 46 31 42.4 31 36.75C31 31.1 27.8 27.5 22.8 27.5H14.5Z" fill="#0F172A" />
+  <!-- Geometric Letter T Stem -->
+  <rect x="42.5" y="19.5" width="8.5" height="34.5" rx="1" fill="#1E3A8A" />
+  <!-- Geometric Letter T Precision Crossbar & Forward Progression Cut -->
+  <path d="M26 10H58L53.5 16.5H26V10Z" fill="#2563EB" />
+  <!-- Digital progression node -->
+  <rect x="53.5" y="48.5" width="5.5" height="5.5" rx="1.2" fill="#2563EB" />
+</svg>

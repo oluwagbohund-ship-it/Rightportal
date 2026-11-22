@@ -1,0 +1,6 @@
+{
+  "name": "Dave Timi EdTech Systems",
+  "description": "Multi-tenant school management and education operating platform built by David Oluwagbohun. Build • Innovate • Transform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

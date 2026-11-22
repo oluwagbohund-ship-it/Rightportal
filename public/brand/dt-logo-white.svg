@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" width="320" height="64" fill="none" role="img" aria-label="Dave Timi EdTech Systems White Logo">
+  <g transform="translate(2, 0)">
+    <rect x="6" y="10" width="16" height="5.5" rx="1.5" fill="#93C5FD" />
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M6 19.5H23.5C33.4 19.5 39.5 25.8 39.5 36.75C39.5 47.7 33.4 54 23.5 54H6V19.5ZM14.5 27.5V46H22.8C27.8 46 31 42.4 31 36.75C31 31.1 27.8 27.5 22.8 27.5H14.5Z" fill="#FFFFFF" />
+    <rect x="42.5" y="19.5" width="8.5" height="34.5" rx="1" fill="#60A5FA" />
+    <path d="M26 10H58L53.5 16.5H26V10Z" fill="#2563EB" />
+    <rect x="53.5" y="48.5" width="5.5" height="5.5" rx="1.2" fill="#60A5FA" />
+  </g>
+  <text x="74" y="33" font-family="'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20" font-weight="700" letter-spacing="-0.02em" fill="#FFFFFF">Dave Timi EdTech</text>
+  <text x="74" y="49" font-family="'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="10.5" font-weight="600" letter-spacing="0.11em" fill="#93C5FD">BUILD • INNOVATE • TRANSFORM</text>
+</svg>
