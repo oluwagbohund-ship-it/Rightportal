@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Activity,
   Bell,
+  Bot,
   Building2,
   CheckCircle2,
   Cpu,
@@ -24,6 +25,7 @@ const OWNER_NAV: PortalNavItem[] = [
   { to: '/dashboard/owner/database', label: 'Database & Backups', icon: Database },
   { to: '/dashboard/owner/files', label: 'Files & Storage', icon: FolderLock },
   { to: '/dashboard/owner/notifications', label: 'Notifications', icon: Bell },
+  { to: '/dashboard/owner/telegram', label: 'Telegram Bot', icon: Bot },
   { to: '/dashboard/owner/settings', label: 'Platform Settings', icon: Settings },
   { to: '/dashboard/owner/security', label: 'Security Monitoring', icon: ShieldAlert },
   { to: '/dashboard/owner/audit-logs', label: 'Audit Logs', icon: Activity },

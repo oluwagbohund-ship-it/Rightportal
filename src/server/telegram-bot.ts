@@ -1,7 +1,7 @@
 import { getDb } from '../db/client.ts';
 import crypto from 'node:crypto';
 
-function getBotToken(): string | null {
+export function getBotToken(): string | null {
   if (process.env.TELEGRAM_BOT_TOKEN) return process.env.TELEGRAM_BOT_TOKEN;
   try {
     const db = getDb();
@@ -87,9 +87,15 @@ export async function handleTelegramUpdate(update: any): Promise<void> {
         return;
       }
 
-      // Search user across students, teachers, parents
+      // Search user across students, teachers, staff
       const student = db
-        .prepare(`SELECT s.*, sc.name as school_name FROM students s JOIN schools sc ON s.school_id = sc.id WHERE s.email = ? OR s.admission_number = ? OR s.access_code = ?`)
+        .prepare(`
+          SELECT s.*, (s.first_name || ' ' || s.last_name) as full_name, sc.name as school_name 
+          FROM students s 
+          JOIN schools sc ON s.school_id = sc.id 
+          LEFT JOIN users u ON s.user_id = u.id
+          WHERE s.student_email = ? OR u.email = ? OR s.admission_number = ?
+        `)
         .get(query, query, query) as any;
 
       if (student) {
@@ -107,7 +113,12 @@ export async function handleTelegramUpdate(update: any): Promise<void> {
       }
 
       const teacher = db
-        .prepare(`SELECT t.*, sc.name as school_name FROM teachers t JOIN schools sc ON t.school_id = sc.id WHERE t.email = ? OR t.staff_id = ?`)
+        .prepare(`
+          SELECT t.*, (t.first_name || ' ' || t.last_name) as full_name, sc.name as school_name 
+          FROM teachers t 
+          JOIN schools sc ON t.school_id = sc.id 
+          WHERE t.email = ? OR t.staff_id_number = ?
+        `)
         .get(query, query) as any;
 
       if (teacher) {
@@ -119,7 +130,7 @@ export async function handleTelegramUpdate(update: any): Promise<void> {
 
         await sendTelegramMessage(
           chatId,
-          `✅ *Successfully Linked!*\n\nSchool: *${teacher.school_name}*\nTeacher: *${teacher.full_name}* (${teacher.staff_id})\nRole: *Teacher*\n\nUse \`/attendance\` or \`/login\` to access your workspace.`,
+          `✅ *Successfully Linked!*\n\nSchool: *${teacher.school_name}*\nTeacher: *${teacher.full_name}* (${teacher.staff_id_number})\nRole: *Teacher*\n\nUse \`/attendance\` or \`/login\` to access your workspace.`,
         );
         return;
       }
@@ -254,7 +265,7 @@ export async function handleTelegramUpdate(update: any): Promise<void> {
       }
       if (link.role === 'student') {
         const idCard = db.prepare(`SELECT * FROM student_id_cards WHERE student_id = ?`).get(link.user_id) as any;
-        const student = db.prepare(`SELECT * FROM students WHERE id = ?`).get(link.user_id) as any;
+        const student = db.prepare(`SELECT *, (first_name || ' ' || last_name) as full_name FROM students WHERE id = ?`).get(link.user_id) as any;
 
         if (!idCard) {
           await sendTelegramMessage(chatId, `🆔 Digital ID card has not been generated for you yet. Ask your school admin.`);

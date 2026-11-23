@@ -90,6 +90,11 @@ const OwnerNotificationsPage = lazy(() =>
     default: m.OwnerNotificationsPage,
   })),
 );
+const OwnerTelegramPage = lazy(() =>
+  import('./pages/platform-owner/OwnerTelegramPage.tsx').then((m) => ({
+    default: m.OwnerTelegramPage,
+  })),
+);
 const OwnerSettingsPage = lazy(() =>
   import('./pages/platform-owner/OwnerSettingsPage.tsx').then((m) => ({
     default: m.OwnerSettingsPage,
@@ -614,6 +619,7 @@ export default function App() {
                   <Route path="database" element={<OwnerDatabasePage />} />
                   <Route path="files" element={<OwnerFilesPage />} />
                   <Route path="notifications" element={<OwnerNotificationsPage />} />
+                  <Route path="telegram" element={<OwnerTelegramPage />} />
                   <Route path="settings" element={<OwnerSettingsPage />} />
                   <Route path="security" element={<OwnerSecurityPage />} />
                   <Route path="audit-logs" element={<OwnerAuditLogsPage />} />

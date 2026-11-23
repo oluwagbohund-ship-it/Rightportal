@@ -56,6 +56,7 @@ import {
   updateWorkforceStatusSchema,
   uploadFileSchema,
 } from '../validation.ts';
+import { getBotToken, sendTelegramMessage } from '../telegram-bot.ts';
 
 export const ownerRouter = Router();
 
@@ -1442,4 +1443,343 @@ ownerRouter.post(
     res.json({ ...result, platformContext });
   },
 );
+
+ownerRouter.get('/telegram/status', requirePermission('platform.settings.manage'), async (req, res) => {
+  try {
+    const db = getDb();
+    const token = getBotToken();
+    const isConfigured = Boolean(token);
+
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+    const appUrl = (process.env.APP_URL || `${protocol}://${host}`).replace(/\/$/, '');
+    const suggestedWebhookUrl = `${appUrl}/api/telegram/webhook`;
+
+    const totalRow = db.prepare('SELECT COUNT(*) as cnt FROM telegram_links').get() as { cnt: number };
+    const studentsRow = db.prepare("SELECT COUNT(*) as cnt FROM telegram_links WHERE role = 'student'").get() as { cnt: number };
+    const teachersRow = db.prepare("SELECT COUNT(*) as cnt FROM telegram_links WHERE role = 'teacher'").get() as { cnt: number };
+    const schoolsRow = db.prepare('SELECT COUNT(DISTINCT school_id) as cnt FROM telegram_links').get() as { cnt: number };
+
+    let botInfo: any = null;
+    let webhookInfo: any = null;
+    let tokenMasked: string | null = null;
+    let apiError: string | null = null;
+
+    if (token) {
+      tokenMasked = token.length > 12 ? `${token.slice(0, 8)}...${token.slice(-4)}` : '••••••••';
+      try {
+        const [meRes, hookRes] = await Promise.all([
+          fetch(`https://api.telegram.org/bot${token}/getMe`),
+          fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`),
+        ]);
+        const meData = (await meRes.json()) as any;
+        const hookData = (await hookRes.json()) as any;
+
+        if (meData.ok) {
+          botInfo = meData.result;
+        } else {
+          apiError = meData.description || 'Failed to authenticate with Telegram';
+        }
+        if (hookData.ok) {
+          webhookInfo = hookData.result;
+        }
+      } catch (err) {
+        apiError = err instanceof Error ? err.message : 'Network error reaching Telegram API';
+      }
+    }
+
+    res.json({
+      configured: isConfigured,
+      tokenMasked,
+      botInfo,
+      webhookInfo,
+      suggestedWebhookUrl,
+      apiError,
+      stats: {
+        totalLinks: totalRow.cnt || 0,
+        studentLinks: studentsRow.cnt || 0,
+        teacherLinks: teachersRow.cnt || 0,
+        schoolsRepresented: schoolsRow.cnt || 0,
+      },
+    });
+  } catch (err) {
+    console.error('[Owner Telegram Status] Error:', err);
+    res.status(500).json({ error: 'Failed to retrieve Telegram status.' });
+  }
+});
+
+ownerRouter.post(
+  '/telegram/configure',
+  requireCsrfCheck,
+  requirePermission('platform.settings.manage'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { botToken, webhookUrl } = req.body as { botToken?: string; webhookUrl?: string };
+      if (!botToken || typeof botToken !== 'string' || !botToken.includes(':')) {
+        res.status(400).json({ error: 'Valid Telegram bot token required (e.g. 123456:ABC-DEF...).' });
+        return;
+      }
+      const cleanToken = botToken.trim();
+
+      const meRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
+      const meData = (await meRes.json()) as any;
+      if (!meData.ok) {
+        res.status(400).json({ error: `Telegram validation failed: ${meData.description || 'Invalid token'}` });
+        return;
+      }
+
+      const protocol = req.headers['x-forwarded-proto'] || 'https';
+      const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+      const appUrl = (process.env.APP_URL || `${protocol}://${host}`).replace(/\/$/, '');
+      const targetWebhookUrl =
+        webhookUrl && webhookUrl.trim().startsWith('http')
+          ? webhookUrl.trim()
+          : `${appUrl}/api/telegram/webhook`;
+
+      const hookRes = await fetch(
+        `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&drop_pending_updates=true`,
+      );
+      const hookData = (await hookRes.json()) as any;
+      if (!hookData.ok) {
+        res.status(400).json({ error: `Telegram setWebhook failed: ${hookData.description || 'Unknown error'}` });
+        return;
+      }
+
+      const db = getDb();
+      db.prepare(`
+        INSERT INTO platform_settings (key, value_json, updated_by, updated_at)
+        VALUES ('telegram_bot_token', ?, ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET
+          value_json = excluded.value_json,
+          updated_by = excluded.updated_by,
+          updated_at = datetime('now')
+      `).run(JSON.stringify(cleanToken), req.auth!.email);
+
+      recordAuditLog({
+        actorUserId: req.auth!.id,
+        actorEmail: req.auth!.email,
+        actorRole: req.auth!.roleCode,
+        authEnvironment: 'workers',
+        action: 'platform.telegram.configured',
+        resourceType: 'platform_settings',
+        resourceId: 'telegram_bot_token',
+        outcome: 'success',
+        metadata: {
+          botUsername: meData.result?.username,
+          botId: meData.result?.id,
+          webhookUrl: targetWebhookUrl,
+        },
+        ipAddress: getClientIp(req),
+      });
+
+      res.json({
+        success: true,
+        message: `Telegram bot @${meData.result?.username} configured and webhook registered successfully!`,
+        bot: meData.result,
+        webhookUrl: targetWebhookUrl,
+      });
+    } catch (err) {
+      console.error('[Owner Telegram Configure] Error:', err);
+      res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to configure Telegram bot.' });
+    }
+  },
+);
+
+ownerRouter.post(
+  '/telegram/webhook',
+  requireCsrfCheck,
+  requirePermission('platform.settings.manage'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { action, webhookUrl } = req.body as { action: 'set' | 'delete'; webhookUrl?: string };
+      const token = getBotToken();
+      if (!token) {
+        res.status(400).json({ error: 'No Telegram bot token is configured yet.' });
+        return;
+      }
+
+      if (action === 'delete') {
+        const resp = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`);
+        const data = (await resp.json()) as any;
+        if (!data.ok) {
+          res.status(400).json({ error: `Telegram deleteWebhook error: ${data.description}` });
+          return;
+        }
+
+        recordAuditLog({
+          actorUserId: req.auth!.id,
+          actorEmail: req.auth!.email,
+          actorRole: req.auth!.roleCode,
+          authEnvironment: 'workers',
+          action: 'platform.telegram.webhook_deleted',
+          resourceType: 'telegram_bot',
+          outcome: 'success',
+          ipAddress: getClientIp(req),
+        });
+
+        res.json({ success: true, message: 'Webhook deleted successfully from Telegram.' });
+        return;
+      }
+
+      if (action === 'set') {
+        const protocol = req.headers['x-forwarded-proto'] || 'https';
+        const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+        const appUrl = (process.env.APP_URL || `${protocol}://${host}`).replace(/\/$/, '');
+        const targetWebhookUrl =
+          webhookUrl && webhookUrl.trim().startsWith('http')
+            ? webhookUrl.trim()
+            : `${appUrl}/api/telegram/webhook`;
+
+        const resp = await fetch(
+          `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&drop_pending_updates=true`,
+        );
+        const data = (await resp.json()) as any;
+        if (!data.ok) {
+          res.status(400).json({ error: `Telegram setWebhook error: ${data.description}` });
+          return;
+        }
+
+        recordAuditLog({
+          actorUserId: req.auth!.id,
+          actorEmail: req.auth!.email,
+          actorRole: req.auth!.roleCode,
+          authEnvironment: 'workers',
+          action: 'platform.telegram.webhook_set',
+          resourceType: 'telegram_bot',
+          outcome: 'success',
+          metadata: { webhookUrl: targetWebhookUrl },
+          ipAddress: getClientIp(req),
+        });
+
+        res.json({ success: true, message: 'Webhook registered successfully with Telegram.', webhookUrl: targetWebhookUrl });
+        return;
+      }
+
+      res.status(400).json({ error: 'Invalid action. Must be "set" or "delete".' });
+    } catch (err) {
+      console.error('[Owner Telegram Webhook] Error:', err);
+      res.status(500).json({ error: 'Failed to update webhook.' });
+    }
+  },
+);
+
+ownerRouter.post(
+  '/telegram/clear',
+  requireCsrfCheck,
+  requirePermission('platform.settings.manage'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const token = getBotToken();
+      if (token) {
+        try {
+          await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`);
+        } catch {
+          // ignore
+        }
+      }
+      const db = getDb();
+      db.prepare(`DELETE FROM platform_settings WHERE key = 'telegram_bot_token'`).run();
+
+      recordAuditLog({
+        actorUserId: req.auth!.id,
+        actorEmail: req.auth!.email,
+        actorRole: req.auth!.roleCode,
+        authEnvironment: 'workers',
+        action: 'platform.telegram.cleared',
+        resourceType: 'platform_settings',
+        resourceId: 'telegram_bot_token',
+        outcome: 'success',
+        ipAddress: getClientIp(req),
+      });
+
+      res.json({ success: true, message: 'Telegram bot credentials cleared and disconnected.' });
+    } catch (err) {
+      console.error('[Owner Telegram Clear] Error:', err);
+      res.status(500).json({ error: 'Failed to clear Telegram bot.' });
+    }
+  },
+);
+
+ownerRouter.get('/telegram/links', requirePermission('platform.settings.manage'), (_req, res) => {
+  try {
+    const db = getDb();
+    const rows = db.prepare(`
+      SELECT
+        tl.telegram_chat_id,
+        tl.user_id,
+        tl.school_id,
+        tl.role,
+        tl.username as telegram_username,
+        tl.linked_at,
+        sc.name as school_name,
+        sc.code as school_code,
+        CASE
+          WHEN tl.role = 'student' THEN (SELECT first_name || ' ' || last_name FROM students WHERE id = tl.user_id)
+          WHEN tl.role = 'teacher' THEN (SELECT first_name || ' ' || last_name FROM teachers WHERE id = tl.user_id)
+          ELSE 'User'
+        END as user_full_name,
+        CASE
+          WHEN tl.role = 'student' THEN (SELECT admission_number FROM students WHERE id = tl.user_id)
+          WHEN tl.role = 'teacher' THEN (SELECT staff_id_number FROM teachers WHERE id = tl.user_id)
+          ELSE tl.user_id
+        END as identifier,
+        CASE
+          WHEN tl.role = 'student' THEN (SELECT student_email FROM students WHERE id = tl.user_id)
+          WHEN tl.role = 'teacher' THEN (SELECT email FROM teachers WHERE id = tl.user_id)
+          ELSE NULL
+        END as email
+      FROM telegram_links tl
+      LEFT JOIN schools sc ON tl.school_id = sc.id
+      ORDER BY tl.linked_at DESC
+    `).all() as any[];
+
+    res.json({ links: rows });
+  } catch (err) {
+    console.error('[Owner Telegram Links] Error:', err);
+    res.status(500).json({ error: 'Failed to retrieve Telegram links.' });
+  }
+});
+
+ownerRouter.delete(
+  '/telegram/links/:chatId',
+  requireCsrfCheck,
+  requirePermission('platform.settings.manage'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const chatId = String(req.params.chatId);
+      const db = getDb();
+      const existing = db.prepare('SELECT * FROM telegram_links WHERE telegram_chat_id = ?').get(chatId) as any;
+      if (!existing) {
+        res.status(404).json({ error: 'Linked account not found.' });
+        return;
+      }
+
+      db.prepare('DELETE FROM telegram_links WHERE telegram_chat_id = ?').run(chatId);
+
+      await sendTelegramMessage(
+        chatId,
+        'ℹ️ *Notice*: Your Telegram account has been unlinked from the school portal by the platform administrator. To reconnect, use `/link <your_code>`.',
+      ).catch(() => {});
+
+      recordAuditLog({
+        actorUserId: req.auth!.id,
+        actorEmail: req.auth!.email,
+        actorRole: req.auth!.roleCode,
+        authEnvironment: 'workers',
+        action: 'platform.telegram.link_removed',
+        resourceType: 'telegram_links',
+        resourceId: chatId,
+        outcome: 'success',
+        metadata: { userId: existing.user_id, schoolId: existing.school_id, role: existing.role },
+        ipAddress: getClientIp(req),
+      });
+
+      res.json({ success: true, message: 'Account unlinked successfully.' });
+    } catch (err) {
+      console.error('[Owner Telegram Unlink] Error:', err);
+      res.status(500).json({ error: 'Failed to unlink account.' });
+    }
+  },
+);
+
 
