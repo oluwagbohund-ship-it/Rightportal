@@ -94,6 +94,8 @@ after(async () => {
 let alphaAdminCookie = '';
 let betaAdminCookie = '';
 let ownerCookie = '';
+let alphaCode = '';
+let betaCode = '';
 let assignedTeacherCookie = '';
 let unassignedTeacherCookie = '';
 let studentAliceCookie = '';
@@ -113,9 +115,37 @@ let compExamId = '';
 let computedResultId = '';
 
 test('Phase 3 Setup: Register two schools, bootstrap owner, create classes, subjects, faculty, students, and guardian', async () => {
+  const boot = await api('/api/auth/workers/bootstrap', {
+    method: 'POST',
+    body: {
+      fullName: 'David Oluwagbohun',
+      email: 'owner@davetimi.com',
+      password: 'OwnerPassword123',
+    },
+  });
+  assert.equal(boot.status, 201);
+  ownerCookie = boot.cookie ?? '';
+
+  const issueA = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Alpha Collegiate' },
+  });
+  assert.equal(issueA.status, 201);
+  alphaCode = (issueA.json.accessCode as { code: string }).code;
+
+  const issueB = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Beta Grammar' },
+  });
+  assert.equal(issueB.status, 201);
+  betaCode = (issueB.json.accessCode as { code: string }).code;
+
   const regA = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: alphaCode,
       schoolName: 'Alpha Collegiate',
       country: 'Nigeria',
       city: 'Lagos',
@@ -132,6 +162,7 @@ test('Phase 3 Setup: Register two schools, bootstrap owner, create classes, subj
   const regB = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: betaCode,
       schoolName: 'Beta Grammar',
       country: 'Ghana',
       city: 'Accra',
@@ -144,17 +175,6 @@ test('Phase 3 Setup: Register two schools, bootstrap owner, create classes, subj
   });
   assert.equal(regB.status, 201);
   betaAdminCookie = regB.cookie ?? '';
-
-  const boot = await api('/api/auth/workers/bootstrap', {
-    method: 'POST',
-    body: {
-      fullName: 'David Oluwagbohun',
-      email: 'owner@davetimi.com',
-      password: 'OwnerPassword123',
-    },
-  });
-  assert.equal(boot.status, 201);
-  ownerCookie = boot.cookie ?? '';
 
   // Create JSS 1 & JSS 2
   const c1 = await api('/api/school/classes', {
@@ -238,14 +258,14 @@ test('Phase 3 Setup: Register two schools, bootstrap owner, create classes, subj
 
   const loginT1 = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'ada@alpha.edu', password: 'TeacherPass123' },
+    body: { schoolCode: alphaCode, email: 'ada@alpha.edu', password: 'TeacherPass123' },
   });
   assert.equal(loginT1.status, 200);
   assignedTeacherCookie = loginT1.cookie ?? '';
 
   const loginT2 = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'alan@alpha.edu', password: 'TeacherPass123' },
+    body: { schoolCode: alphaCode, email: 'alan@alpha.edu', password: 'TeacherPass123' },
   });
   assert.equal(loginT2.status, 200);
   unassignedTeacherCookie = loginT2.cookie ?? '';
@@ -303,13 +323,13 @@ test('Phase 3 Setup: Register two schools, bootstrap owner, create classes, subj
 
   const loginAlice = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'alice@alpha.edu', password: 'StudentPass123' },
+    body: { schoolCode: alphaCode, email: 'alice@alpha.edu', password: 'StudentPass123' },
   });
   studentAliceCookie = loginAlice.cookie ?? '';
 
   const loginParent = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'parent.newton@alpha.edu', password: 'ParentPass123' },
+    body: { schoolCode: alphaCode, email: 'parent.newton@alpha.edu', password: 'ParentPass123' },
   });
   parentAliceCookie = loginParent.cookie ?? '';
 });

@@ -104,9 +104,18 @@ test('Phases 7-11 integration: Comms, Timetable Conflicts, Public Website + Admi
   assert.equal(boot.status, 201);
   const ownerCookie = boot.cookie!;
 
+  const issueRes = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Crestview International College' },
+  });
+  assert.equal(issueRes.status, 201);
+  const schoolCode = (issueRes.json.accessCode as { code: string }).code;
+
   const reg = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolCode,
       schoolName: 'Crestview International College',
       country: 'Nigeria',
       city: 'Lagos',
@@ -181,13 +190,13 @@ test('Phases 7-11 integration: Comms, Timetable Conflicts, Public Website + Admi
   const tchCookie = (
     await api('/api/auth/school/login', {
       method: 'POST',
-      body: { email: 'ngozi@crestview.edu.ng', password: 'Password123' },
+      body: { schoolCode, email: 'ngozi@crestview.edu.ng', password: 'Password123' },
     })
   ).cookie!;
   const stuCookie = (
     await api('/api/auth/school/login', {
       method: 'POST',
-      body: { email: 'chidi@crestview.edu.ng', password: 'Password123' },
+      body: { schoolCode, email: 'chidi@crestview.edu.ng', password: 'Password123' },
     })
   ).cookie!;
 

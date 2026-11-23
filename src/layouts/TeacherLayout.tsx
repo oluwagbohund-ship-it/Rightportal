@@ -9,6 +9,7 @@ import {
   History,
   LayoutDashboard,
   MessageSquare,
+  QrCode,
   UserCheck,
 } from 'lucide-react';
 import { Outlet, useNavigate } from 'react-router-dom';
@@ -17,6 +18,7 @@ import { useAuth } from '../context/AuthContext.tsx';
 
 const TEACHER_NAV: PortalNavItem[] = [
   { to: '/dashboard/teacher', label: 'Faculty Workspace', icon: LayoutDashboard, end: true },
+  { to: '/dashboard/teacher/attendance', label: 'Attendance & QR Scan', icon: QrCode },
   { to: '/dashboard/teacher/academics', label: 'Academic Hub', icon: BookOpen, end: true },
   { to: '/dashboard/teacher/academics/scores', label: 'Score Entry', icon: ClipboardEdit },
   { to: '/dashboard/teacher/academics/history', label: 'Assessment History', icon: History },

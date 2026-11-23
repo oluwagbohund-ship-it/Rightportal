@@ -60,6 +60,22 @@ export interface SchoolRecord {
   session_count?: number;
 }
 
+export type SchoolAccessCodeStatus = 'available' | 'used' | 'revoked';
+
+export interface SchoolAccessCodeRecord {
+  id: string;
+  code: string;
+  intended_school_name: string;
+  recipient_email: string;
+  status: SchoolAccessCodeStatus;
+  created_by_email?: string | null;
+  used_by_school_id?: string | null;
+  used_by_school_name?: string | null;
+  expires_at: string | null;
+  used_at: string | null;
+  created_at: string;
+}
+
 export interface AcademicSessionRecord {
   id: string;
   name: string;
@@ -950,4 +966,84 @@ export interface AcademicOverviewPayload {
     end_date: string;
   }>;
 }
+
+export interface StudentDigitalIdCardRecord {
+  id: string;
+  school_id: string;
+  student_id: string;
+  card_number: string;
+  status: 'active' | 'revoked' | 'expired';
+  issued_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  revoked_reason: string;
+  last_used_login_at: string | null;
+  last_used_attendance_at: string | null;
+  qrToken: string | null;
+  qrDataUrl: string | null;
+  school: {
+    id: string;
+    name: string;
+    code: string;
+    city: string;
+    country: string;
+    motto: string;
+    logo_file_id: string | null;
+  };
+  student: {
+    id: string;
+    user_id: string | null;
+    admission_number: string;
+    first_name: string;
+    middle_name: string;
+    last_name: string;
+    gender: string;
+    date_of_birth: string;
+    class_name: string | null;
+    arm_name: string | null;
+    photo_file_id: string | null;
+    status: string;
+    portalLoginEnabled: boolean;
+  };
+}
+
+export interface StudentIdCardDirectoryItem {
+  student_id: string;
+  user_id: string | null;
+  admission_number: string;
+  first_name: string;
+  last_name: string;
+  gender: string;
+  student_status: string;
+  class_id: string | null;
+  class_name: string | null;
+  arm_name: string | null;
+  photo_file_id: string | null;
+  card_id: string | null;
+  card_number: string | null;
+  card_status: 'active' | 'revoked' | 'expired' | null;
+  issued_at: string | null;
+  expires_at: string | null;
+  last_used_login_at: string | null;
+  last_used_attendance_at: string | null;
+}
+
+export interface IdCardAttendanceScanResult {
+  ok: boolean;
+  alreadyMarked: boolean;
+  attendanceDate: string;
+  sessionLabel: string;
+  status: 'present' | 'late' | 'absent' | 'excused';
+  markedAt: string;
+  student: {
+    id: string;
+    fullName: string;
+    admissionNumber: string;
+    classId: string;
+    className: string;
+    armName: string | null;
+    cardNumber: string;
+  };
+}
+
 

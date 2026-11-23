@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PageHeader } from '../../../components/dashboard/PageHeader.tsx';
 import { Alert } from '../../../components/ui/alert.tsx';
 import { Button } from '../../../components/ui/button.tsx';
@@ -23,11 +24,27 @@ export function AttendanceOverviewPage() {
     loadData();
   }, []);
 
+  const classBreakdown = data?.classBreakdown ?? [];
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Attendance & QR Register"
-        description="Tenant-wide daily attendance monitoring, QR check-in generation, and correction management."
+        description="Tenant-wide daily attendance monitoring, Digital ID QR scanning, and class roll call registers."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Link to="/dashboard/school-admin/students/id-cards">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+                Student Digital ID Cards
+              </Button>
+            </Link>
+            <Link to="/dashboard/school-admin/attendance/register">
+              <Button type="button" size="sm" className="whitespace-nowrap shrink-0">
+                Scan QR &amp; Mark Register
+              </Button>
+            </Link>
+          </div>
+        }
       />
       {error ? <Alert variant="error">{error}</Alert> : null}
       {loading ? (
@@ -80,33 +97,39 @@ export function AttendanceOverviewPage() {
           <Card>
             <CardHeader>
               <CardTitle>Class Attendance Breakdown</CardTitle>
-              <CardDescription>Today's attendance metrics across school classes.</CardDescription>
+              <CardDescription>Today’s attendance metrics across active school classes.</CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Class Name</TableHead>
-                    <TableHead>Total Students</TableHead>
-                    <TableHead>Present</TableHead>
-                    <TableHead>Late</TableHead>
-                    <TableHead>Absent</TableHead>
-                    <TableHead>Rate</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data?.perClassStats?.map((cls: any) => (
-                    <TableRow key={cls.class_id}>
-                      <TableCell className="font-medium text-slate-900">{cls.class_name}</TableCell>
-                      <TableCell className="tabular-nums">{cls.total_students}</TableCell>
-                      <TableCell className="tabular-nums text-emerald-600">{cls.present}</TableCell>
-                      <TableCell className="tabular-nums text-amber-600">{cls.late}</TableCell>
-                      <TableCell className="tabular-nums text-rose-600">{cls.absent}</TableCell>
-                      <TableCell className="tabular-nums font-semibold">{cls.attendanceRatePercent}%</TableCell>
+              {classBreakdown.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  No active classes configured yet. Create classes to view daily attendance metrics.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Class Name</TableHead>
+                      <TableHead>Total Students</TableHead>
+                      <TableHead>Present</TableHead>
+                      <TableHead>Late</TableHead>
+                      <TableHead>Absent</TableHead>
+                      <TableHead>Rate</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {classBreakdown.map((cls: any) => (
+                      <TableRow key={cls.class_id}>
+                        <TableCell className="font-medium text-slate-900">{cls.class_name}</TableCell>
+                        <TableCell className="tabular-nums">{cls.total_students}</TableCell>
+                        <TableCell className="tabular-nums text-emerald-600">{cls.present}</TableCell>
+                        <TableCell className="tabular-nums text-amber-600">{cls.late}</TableCell>
+                        <TableCell className="tabular-nums text-rose-600">{cls.absent}</TableCell>
+                        <TableCell className="tabular-nums font-semibold">{cls.attendanceRatePercent}%</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -114,3 +137,4 @@ export function AttendanceOverviewPage() {
     </div>
   );
 }
+

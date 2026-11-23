@@ -65,7 +65,7 @@ export function PortalShell({
     <div className="flex h-full flex-col bg-[#0F172A] text-slate-200">
       <div className="shrink-0 border-b border-slate-800 px-5 py-4 space-y-2">
         <Logo variant="white" size="xs" />
-        <p className="text-[11px] font-medium text-slate-400 pl-8">{portalLabel}</p>
+        <p className="text-[11px] font-medium text-slate-400 pl-0.5">{portalLabel}</p>
       </div>
 
       <nav aria-label={`${portalLabel} Navigation`} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 space-y-1">

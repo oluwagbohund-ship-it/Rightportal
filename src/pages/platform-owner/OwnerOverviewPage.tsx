@@ -25,6 +25,7 @@ interface OverviewMetrics {
   schoolMembersCount: number;
   activeAuthSessions: number;
   contactInquiriesCount: number;
+  availableAccessCodesCount?: number;
 }
 
 export function OwnerOverviewPage() {
@@ -39,6 +40,7 @@ export function OwnerOverviewPage() {
     schoolMembersCount: 0,
     activeAuthSessions: 0,
     contactInquiriesCount: 0,
+    availableAccessCodesCount: 0,
   });
   const [recentAudits, setRecentAudits] = useState<AuditLogRecord[]>([]);
 
@@ -72,7 +74,7 @@ export function OwnerOverviewPage() {
         actions={
           <Link to="/dashboard/owner/schools">
             <Button type="button" size="sm">
-              Manage Schools
+              Issue School Code & Manage Schools
             </Button>
           </Link>
         }

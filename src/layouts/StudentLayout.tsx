@@ -3,10 +3,12 @@ import {
   Award,
   Bell,
   CalendarDays,
+  ClipboardCheck,
   FileText,
   FolderLock,
   GraduationCap,
   History,
+  IdCard,
   Shield,
 } from 'lucide-react';
 import { Outlet, useNavigate } from 'react-router-dom';
@@ -15,6 +17,8 @@ import { useAuth } from '../context/AuthContext.tsx';
 
 const STUDENT_NAV: PortalNavItem[] = [
   { to: '/dashboard/student', label: 'Student Portal', icon: GraduationCap, end: true },
+  { to: '/dashboard/student/id-card', label: 'Digital ID Card', icon: IdCard },
+  { to: '/dashboard/student/attendance', label: 'My Attendance', icon: ClipboardCheck },
   { to: '/dashboard/student/results', label: 'Published Results', icon: Award },
   { to: '/dashboard/student/report-cards', label: 'Report Cards', icon: FileText },
   { to: '/dashboard/student/history', label: 'Academic History', icon: History },

@@ -90,10 +90,39 @@ after(async () => {
 });
 
 test('Phases 4, 5, 6 end-to-end integration: Attendance + QR, Finance + Proof Verification + Reversal, CBT + Essay + Phase 3 Sync', async () => {
+  // 0. Bootstrap Platform Owner & issue School Access Codes
+  const boot = await api('/api/auth/workers/bootstrap', {
+    method: 'POST',
+    body: {
+      fullName: 'David Oluwagbohun',
+      email: 'owner@davetimi.test',
+      password: 'OwnerPassword123',
+    },
+  });
+  assert.equal(boot.status, 201);
+  const ownerCookie = boot.cookie!;
+
+  const issueA = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Horizon Academy Lagos' },
+  });
+  assert.equal(issueA.status, 201);
+  const schoolACode = (issueA.json.accessCode as { code: string }).code;
+
+  const issueB = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Summit School Abuja' },
+  });
+  assert.equal(issueB.status, 201);
+  const schoolBCode = (issueB.json.accessCode as { code: string }).code;
+
   // 1. Register School A & School B (for tenant isolation tests)
   const regA = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolACode,
       schoolName: 'Horizon Academy Lagos',
       country: 'Nigeria',
       city: 'Lagos',
@@ -110,6 +139,7 @@ test('Phases 4, 5, 6 end-to-end integration: Attendance + QR, Finance + Proof Ve
   const regB = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolBCode,
       schoolName: 'Summit School Abuja',
       country: 'Nigeria',
       city: 'Abuja',
@@ -212,21 +242,21 @@ test('Phases 4, 5, 6 end-to-end integration: Attendance + QR, Finance + Proof Ve
   // Login Teacher, Student, Parent
   const tchLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'kemi.teacher@horizon.edu.ng', password: 'Password123' },
+    body: { schoolCode: schoolACode, email: 'kemi.teacher@horizon.edu.ng', password: 'Password123' },
   });
   assert.equal(tchLogin.status, 200);
   const teacherCookie = tchLogin.cookie!;
 
   const stuLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'tunde.student@horizon.edu.ng', password: 'Password123' },
+    body: { schoolCode: schoolACode, email: 'tunde.student@horizon.edu.ng', password: 'Password123' },
   });
   assert.equal(stuLogin.status, 200);
   const studentCookie = stuLogin.cookie!;
 
   const parLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'mrs.okafor@horizon.edu.ng', password: 'Password123' },
+    body: { schoolCode: schoolACode, email: 'mrs.okafor@horizon.edu.ng', password: 'Password123' },
   });
   assert.equal(parLogin.status, 200);
   const parentCookie = parLogin.cookie!;

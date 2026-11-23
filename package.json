@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "start": "node server.ts",
@@ -10,7 +13,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/server/security.test.ts src/server/validation.test.ts src/server/school-helpers.test.ts src/server/academics-engine.test.ts src/server/engines.test.ts src/server/phase15.integration.test.ts src/server/phase2.integration.test.ts src/server/phase3.integration.test.ts src/server/phase4_6.integration.test.ts src/server/phase7_11.integration.test.ts"
+    "test": "tsx --test src/server/security.test.ts src/server/validation.test.ts src/server/school-helpers.test.ts src/server/access-code-helpers.test.ts src/server/public-pages.test.ts src/server/academics-engine.test.ts src/server/engines.test.ts src/server/id-card-helpers.test.ts src/components/ui/select-utils.test.ts src/server/phase15.integration.test.ts src/server/phase2.integration.test.ts src/server/phase3.integration.test.ts src/server/phase4_6.integration.test.ts src/server/phase7_11.integration.test.ts src/server/id-cards.integration.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",
@@ -22,6 +25,7 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "nodemailer": "^10.6.1",

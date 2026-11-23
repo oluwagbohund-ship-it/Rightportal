@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { PUBLIC_MEDIA, VisualMediaFrame } from '../../components/public/publicMedia.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
@@ -47,36 +48,44 @@ export function ContactPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-14 sm:px-6 lg:px-8">
-      <div className="grid gap-10 lg:grid-cols-12">
-        <div className="lg:col-span-5 space-y-4">
-          <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
-            Contact Dave Timi EdTech Systems
-          </p>
-          <h1 className="text-3xl font-bold tracking-tight text-[#0F172A]">
-            Connect with our engineering and onboarding team.
-          </h1>
-          <p className="text-sm text-slate-600 leading-relaxed">
-            Have questions about multi-school deployment, institutional verification, or Phase 2 academic integration? Submit your inquiry directly to our platform operations log.
-          </p>
-          <div className="border-t border-slate-200 pt-5 space-y-2 text-sm text-slate-700">
-            <p>
-              <span className="font-semibold text-[#0F172A]">Architect & Developer:</span>{' '}
-              David Oluwagbohun
+    <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 lg:px-8">
+      <div className="grid gap-10 lg:grid-cols-12 lg:items-stretch">
+        <div className="lg:col-span-5 flex flex-col justify-between gap-6">
+          <div className="space-y-4">
+            <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
+              Contact Dave Timi EdTech Systems
             </p>
-            <p>
-              <span className="font-semibold text-[#0F172A]">Platform Tagline:</span>{' '}
-              Build • Innovate • Transform
+            <h1
+              className="text-3xl sm:text-4xl font-bold tracking-tight text-[#0F172A]"
+              style={{ textWrap: 'balance' }}
+            >
+              Connect with our engineering and onboarding team.
+            </h1>
+            <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
+              Need an institutional School Access Code, a walkthrough for school leadership, or technical assistance? Send your message straight to our operations team.
             </p>
           </div>
+
+          <VisualMediaFrame
+            src={PUBLIC_MEDIA.campusHubImg}
+            alt="Modern school administrative hub supporting school staff and learners"
+            fallbackTitle="Dave Timi EdTech Onboarding Team"
+            className="h-60 shadow-md"
+          >
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-slate-950/15 to-transparent pointer-events-none" />
+            <div className="absolute bottom-4 left-4 right-4 text-white text-xs space-y-0.5">
+              <p className="font-semibold text-sm">David Oluwagbohun</p>
+              <p className="text-blue-200">Founder &amp; Architect · Build • Innovate • Transform</p>
+            </div>
+          </VisualMediaFrame>
         </div>
 
         <div className="lg:col-span-7">
-          <Card>
+          <Card className="elastic-card h-full rounded-2xl shadow-sm">
             <CardHeader>
-              <CardTitle>Institutional Inquiry</CardTitle>
+              <CardTitle className="text-xl">Institutional Inquiry</CardTitle>
               <CardDescription>
-                All inquiries are persisted and reviewed by authorized DT platform personnel.
+                All inquiries are persisted and reviewed directly by authorized platform personnel.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -141,7 +150,7 @@ export function ContactPage() {
                   />
                 </div>
 
-                <Button type="submit" disabled={submitting} className="w-full sm:w-auto">
+                <Button type="submit" size="lg" disabled={submitting} className="w-full sm:w-auto">
                   {submitting ? 'Submitting Inquiry...' : 'Send Inquiry'}
                 </Button>
               </form>

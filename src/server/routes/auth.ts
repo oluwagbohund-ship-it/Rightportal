@@ -33,12 +33,19 @@ import {
   revokeSessionByToken,
   rotateSessionToken,
 } from '../session-service.ts';
+import {
+  evaluateIdCardValidity,
+  extractIdCardTokenFromScan,
+  ID_CARD_TOKEN_PREFIX,
+} from '../id-card-helpers.ts';
 import type { RoleCode, UserType } from '../types.ts';
 import {
   bootstrapOwnerSchema,
   loginSchema,
   passwordResetConfirmSchema,
   passwordResetRequestSchema,
+  schoolLoginSchema,
+  studentQrLoginSchema,
 } from '../validation.ts';
 
 export const authRouter = Router();
@@ -414,7 +421,7 @@ authRouter.post('/workers/login', requireCsrfCheck, (req, res) => {
 });
 
 authRouter.post('/school/login', requireCsrfCheck, (req, res) => {
-  const parsed = loginSchema.safeParse(req.body);
+  const parsed = schoolLoginSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid login details.' });
     return;
@@ -423,7 +430,7 @@ authRouter.post('/school/login', requireCsrfCheck, (req, res) => {
   const db = getDb();
   purgeExpiredSessions();
   const email = parsed.data.email.toLowerCase();
-  const schoolCodeInput = parsed.data.schoolCode?.trim().toUpperCase();
+  const schoolCodeInput = parsed.data.schoolCode.trim().toUpperCase();
   const ip = getClientIp(req) || 'unknown';
   const emailRateKey = `login:school:email:${email}`;
   const ipRateKey = `login:school:ip:${ip}`;
@@ -619,6 +626,219 @@ authRouter.post('/school/login', requireCsrfCheck, (req, res) => {
   res.json({
     redirectPath: redirectMap[membership.role_code] ?? '/dashboard/school-admin',
   });
+});
+
+authRouter.post('/school/qr-login', requireCsrfCheck, (req, res) => {
+  const parsed = studentQrLoginSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid ID Card QR payload.' });
+    return;
+  }
+
+  const db = getDb();
+  purgeExpiredSessions();
+  const ip = getClientIp(req) || 'unknown';
+  const ipRateKey = `login:school_qr:ip:${ip}`;
+  const ipLimit = checkRateLimit(ipRateKey, MAX_FAILED_LOGIN_PER_IP, RATE_WINDOW_MINUTES);
+  if (!ipLimit.allowed) {
+    res.setHeader('Retry-After', String(ipLimit.retryAfterSeconds));
+    res.status(429).json({
+      error: `Too many failed QR sign-in attempts. Try again in ${Math.ceil(ipLimit.retryAfterSeconds / 60)} minute(s).`,
+    });
+    return;
+  }
+
+  const extractedToken = extractIdCardTokenFromScan(parsed.data.qrToken);
+  if (!extractedToken.startsWith(ID_CARD_TOKEN_PREFIX) || extractedToken.length < 16) {
+    recordRateLimitedAttempt(ipRateKey, MAX_FAILED_LOGIN_PER_IP, RATE_WINDOW_MINUTES, LOCKOUT_MINUTES);
+    res.status(401).json({ error: 'Unrecognized Digital ID Card QR code.' });
+    return;
+  }
+
+  const tokenHash = sha256Hex(extractedToken);
+  const cardRateKey = `login:school_qr:card:${tokenHash.slice(0, 24)}`;
+  const cardLimit = checkRateLimit(cardRateKey, MAX_FAILED_LOGIN_PER_ACCOUNT, RATE_WINDOW_MINUTES);
+  if (!cardLimit.allowed) {
+    res.setHeader('Retry-After', String(cardLimit.retryAfterSeconds));
+    res.status(429).json({
+      error: `QR login temporarily locked for this card. Try again in ${Math.ceil(cardLimit.retryAfterSeconds / 60)} minute(s).`,
+    });
+    return;
+  }
+
+  const row = db
+    .prepare(`
+      SELECT
+        ic.id AS card_id,
+        ic.school_id,
+        ic.student_id,
+        ic.card_number,
+        ic.status AS card_status,
+        ic.expires_at,
+        ic.revoked_at,
+        s.status AS student_status,
+        s.user_id,
+        s.first_name,
+        s.last_name,
+        sch.code AS school_code,
+        sch.status AS school_status,
+        u.email AS user_email,
+        u.user_type,
+        u.is_active AS user_active,
+        sm.status AS membership_status,
+        r.code AS role_code
+      FROM student_id_cards ic
+      INNER JOIN students s ON s.id = ic.student_id AND s.school_id = ic.school_id
+      INNER JOIN schools sch ON sch.id = ic.school_id
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN school_memberships sm ON sm.user_id = u.id AND sm.school_id = ic.school_id
+      LEFT JOIN roles r ON r.id = sm.role_id
+      WHERE ic.qr_token_hash = ?
+      LIMIT 1
+    `)
+    .get(tokenHash) as
+    | {
+        card_id: string;
+        school_id: string;
+        student_id: string;
+        card_number: string;
+        card_status: string;
+        expires_at: string;
+        revoked_at: string | null;
+        student_status: string;
+        user_id: string | null;
+        first_name: string;
+        last_name: string;
+        school_code: string;
+        school_status: string;
+        user_email: string | null;
+        user_type: UserType | null;
+        user_active: number | null;
+        membership_status: string | null;
+        role_code: RoleCode | null;
+      }
+    | undefined;
+
+  if (!row) {
+    recordRateLimitedAttempt(ipRateKey, MAX_FAILED_LOGIN_PER_IP, RATE_WINDOW_MINUTES, LOCKOUT_MINUTES);
+    recordRateLimitedAttempt(cardRateKey, MAX_FAILED_LOGIN_PER_ACCOUNT, RATE_WINDOW_MINUTES, LOCKOUT_MINUTES);
+    recordAuditLog({
+      actorEmail: 'qr-login',
+      actorRole: 'unknown',
+      authEnvironment: 'school',
+      action: 'auth.school.qr_login_failed',
+      resourceType: 'student_id_card',
+      outcome: 'failure',
+      ipAddress: ip,
+    });
+    res.status(401).json({ error: 'Invalid or unregistered Student Digital ID Card.' });
+    return;
+  }
+
+  const optionalSchoolCode = parsed.data.schoolCode.trim().toUpperCase();
+  if (optionalSchoolCode && row.school_code.toUpperCase() !== optionalSchoolCode) {
+    recordRateLimitedAttempt(ipRateKey, MAX_FAILED_LOGIN_PER_IP, RATE_WINDOW_MINUTES, LOCKOUT_MINUTES);
+    res.status(403).json({ error: 'This Digital ID Card does not belong to the entered School Code.' });
+    return;
+  }
+
+  const cardCheck = evaluateIdCardValidity({
+    status: row.card_status,
+    expires_at: row.expires_at,
+    revoked_at: row.revoked_at,
+  });
+  if (!cardCheck.valid) {
+    if (row.card_status === 'active' && !row.revoked_at) {
+      db.prepare("UPDATE student_id_cards SET status = 'expired' WHERE id = ? AND status = 'active'").run(
+        row.card_id,
+      );
+    }
+    recordRateLimitedAttempt(ipRateKey, MAX_FAILED_LOGIN_PER_IP, RATE_WINDOW_MINUTES, LOCKOUT_MINUTES);
+    recordAuditLog({
+      actorUserId: row.user_id,
+      actorEmail: row.user_email ?? 'unlinked-student',
+      actorRole: 'student',
+      schoolId: row.school_id,
+      authEnvironment: 'school',
+      action: 'auth.school.qr_card_invalid',
+      resourceType: 'student_id_card',
+      resourceId: row.card_id,
+      outcome: 'denied',
+      metadata: { reason: cardCheck.reason },
+      ipAddress: ip,
+    });
+    res.status(403).json({ error: cardCheck.reason });
+    return;
+  }
+
+  if (row.school_status === 'suspended') {
+    res.status(403).json({
+      error: 'This school tenant is currently suspended. Contact Dave Timi EdTech Support.',
+    });
+    return;
+  }
+
+  if (row.student_status !== 'active') {
+    res.status(403).json({
+      error: `Student enrollment is currently "${row.student_status}". Portal sign-in is disabled.`,
+    });
+    return;
+  }
+
+  if (
+    !row.user_id ||
+    !row.user_email ||
+    row.user_active !== 1 ||
+    row.user_type !== 'school_member' ||
+    row.membership_status !== 'active' ||
+    row.role_code !== 'student' ||
+    !isAllowedEnvironmentForUser(row.user_type, row.role_code, 'school')
+  ) {
+    res.status(403).json({
+      error:
+        'No active Student Portal login is linked to this ID Card yet. Ask your School Administrator to enable your student account.',
+    });
+    return;
+  }
+
+  clearRateLimit(ipRateKey);
+  clearRateLimit(cardRateKey);
+
+  db.prepare("UPDATE student_id_cards SET last_used_login_at = datetime('now') WHERE id = ?").run(
+    row.card_id,
+  );
+
+  const { rawToken, maxAgeSeconds } = createAuthSession({
+    userId: row.user_id,
+    authEnvironment: 'school',
+    activeSchoolId: row.school_id,
+    ipAddress: ip,
+    userAgent: req.headers['user-agent'] ?? '',
+  });
+
+  recordAuditLog({
+    actorUserId: row.user_id,
+    actorEmail: row.user_email,
+    actorRole: 'student',
+    schoolId: row.school_id,
+    authEnvironment: 'school',
+    action: 'auth.school.qr_login_success',
+    resourceType: 'student_id_card',
+    resourceId: row.card_id,
+    outcome: 'success',
+    metadata: { studentId: row.student_id, cardNumber: row.card_number },
+    ipAddress: ip,
+  });
+
+  res.setHeader(
+    'Set-Cookie',
+    buildSessionCookieHeader(rawToken, {
+      maxAgeSeconds,
+      isHttps: isRequestHttps(req),
+    }),
+  );
+
+  res.json({ redirectPath: '/dashboard/student' });
 });
 
 authRouter.post('/password-reset/request', requireCsrfCheck, (req, res) => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { DTMonogramSvg } from './Logo.tsx';
+import { BRAND_LOGO_URL } from './Logo.tsx';
 import { cn } from '../../lib/utils.ts';
 
 interface BrandLoaderProps {
@@ -23,8 +23,17 @@ export function BrandLoader({
         className,
       )}
     >
-      <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <DTMonogramSvg tone="primary" className="h-10 w-10 motion-safe:animate-pulse" />
+      <div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-slate-200 bg-white shadow-md p-2.5">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -inset-1 rounded-full border-2 border-transparent border-t-[#2563EB] border-r-[#1E3A8A] motion-safe:animate-spin"
+        />
+        <img
+          src={BRAND_LOGO_URL}
+          alt="Dave Timi EdTech Systems rolling logo"
+          referrerPolicy="no-referrer"
+          className="h-full w-full object-contain motion-safe:animate-logo-roll select-none"
+        />
       </div>
       <div className="text-center space-y-1">
         <p className="text-sm font-semibold text-[#0F172A]">{label}</p>

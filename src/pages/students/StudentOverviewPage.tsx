@@ -100,19 +100,24 @@ export function StudentOverviewPage() {
         description="Your institutional enrollment record, assigned class curriculum, and academic progression timeline."
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link to="/dashboard/student/id-card">
+              <Button type="button" size="sm" className="whitespace-nowrap shrink-0">
+                My Digital ID Card
+              </Button>
+            </Link>
+            <Link to="/dashboard/student/attendance">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+                Attendance Log
+              </Button>
+            </Link>
             <Link to="/dashboard/student/results">
-              <Button type="button" size="sm">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
                 Published Results
               </Button>
             </Link>
             <Link to="/dashboard/student/report-cards">
-              <Button type="button" size="sm" variant="outline">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
                 Report Cards
-              </Button>
-            </Link>
-            <Link to="/dashboard/student/term">
-              <Button type="button" size="sm" variant="outline">
-                Term Schedule
               </Button>
             </Link>
           </div>

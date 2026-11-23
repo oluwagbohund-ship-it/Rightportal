@@ -4,12 +4,14 @@ import {
   bootstrapOwnerSchema,
   contactInquirySchema,
   createAcademicSessionSchema,
+  createSchoolAccessCodeSchema,
   createSchoolMemberSchema,
   createSchoolNotificationSchema,
   passwordResetConfirmSchema,
   passwordResetRequestSchema,
   registerSchoolSchema,
   restoreBackupSchema,
+  schoolLoginSchema,
   uploadFileSchema,
 } from './validation.ts';
 
@@ -29,8 +31,20 @@ test('bootstrapOwnerSchema enforces strong password rules', () => {
   assert.equal(valid.success, true);
 });
 
-test('registerSchoolSchema validates required institutional fields', () => {
+test('registerSchoolSchema requires accessCode and validates institutional fields', () => {
+  const missingCode = registerSchoolSchema.safeParse({
+    schoolName: 'Rightec International School',
+    country: 'Nigeria',
+    city: 'Lagos',
+    contactEmail: 'admin@rightec.edu',
+    adminFullName: 'Adaeze Okafor',
+    adminEmail: 'adaeze@rightec.edu',
+    adminPassword: 'Password123',
+  });
+  assert.equal(missingCode.success, false);
+
   const missingName = registerSchoolSchema.safeParse({
+    accessCode: 'DT-7K9M2P',
     schoolName: 'A',
     country: 'Nigeria',
     city: 'Lagos',
@@ -42,6 +56,7 @@ test('registerSchoolSchema validates required institutional fields', () => {
   assert.equal(missingName.success, false);
 
   const valid = registerSchoolSchema.safeParse({
+    accessCode: 'DT-7K9M2P',
     schoolName: 'Rightec International School',
     country: 'Nigeria',
     city: 'Lagos',
@@ -52,6 +67,29 @@ test('registerSchoolSchema validates required institutional fields', () => {
     initialSessionName: '2026/2027 Academic Session',
   });
   assert.equal(valid.success, true);
+
+  assert.equal(
+    schoolLoginSchema.safeParse({
+      email: 'admin@rightec.edu',
+      password: 'Password123',
+    }).success,
+    false,
+  );
+  assert.equal(
+    schoolLoginSchema.safeParse({
+      schoolCode: 'DT-7K9M2P',
+      email: 'admin@rightec.edu',
+      password: 'Password123',
+    }).success,
+    true,
+  );
+  assert.equal(
+    createSchoolAccessCodeSchema.safeParse({
+      intendedSchoolName: 'Rightec International School',
+      customCode: 'bad code!',
+    }).success,
+    false,
+  );
 });
 
 test('createAcademicSessionSchema enforces endDate after startDate', () => {

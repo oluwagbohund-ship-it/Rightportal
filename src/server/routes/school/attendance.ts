@@ -19,6 +19,12 @@ import {
 } from '../../middleware.ts';
 import { generateOpaqueToken, hasPermission, sha256Hex } from '../../security.ts';
 import {
+  evaluateIdCardValidity,
+  extractIdCardTokenFromScan,
+  ID_CARD_TOKEN_PREFIX,
+} from '../../id-card-helpers.ts';
+import { scanStudentIdAttendanceSchema } from '../../validation.ts';
+import {
   createAttendanceCorrectionSchema,
   generateQrAttendanceSchema,
   markAttendanceRegisterSchema,
@@ -1259,6 +1265,286 @@ schoolAttendanceRouter.post(
       message: `Attendance checked in for ${qrSession.title} (${qrSession.attendance_date}).`,
       attendanceDate: qrSession.attendance_date,
       recordId,
+    });
+  },
+);
+
+// Teacher / School Admin: Mark attendance by scanning a Student's Digital ID Card QR code
+schoolAttendanceRouter.post(
+  '/attendance/id-card-scan',
+  requireCsrfCheck,
+  requirePermission('school.attendance.mark'),
+  (req: AuthenticatedRequest, res) => {
+    const parsed = scanStudentIdAttendanceSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid ID card scan payload.' });
+      return;
+    }
+
+    const db = getDb();
+    const schoolId = req.auth!.activeSchoolId!;
+    const extracted = extractIdCardTokenFromScan(parsed.data.qrToken);
+    if (!extracted.startsWith(ID_CARD_TOKEN_PREFIX) || extracted.length < 16) {
+      res.status(400).json({ error: 'Unrecognized Student Digital ID Card QR code.' });
+      return;
+    }
+
+    const tokenHash = sha256Hex(extracted);
+    const cardRow = db
+      .prepare(`
+        SELECT
+          ic.id AS card_id,
+          ic.card_number,
+          ic.status AS card_status,
+          ic.expires_at,
+          ic.revoked_at,
+          s.id AS student_id,
+          s.first_name,
+          s.last_name,
+          s.admission_number,
+          s.status AS student_status,
+          s.current_class_id,
+          s.current_arm_id,
+          c.name AS class_name,
+          a.name AS arm_name
+        FROM student_id_cards ic
+        INNER JOIN students s ON s.id = ic.student_id AND s.school_id = ic.school_id
+        LEFT JOIN school_classes c ON c.id = s.current_class_id
+        LEFT JOIN class_arms a ON a.id = s.current_arm_id
+        WHERE ic.qr_token_hash = ? AND ic.school_id = ?
+        LIMIT 1
+      `)
+      .get(tokenHash, schoolId) as
+      | {
+          card_id: string;
+          card_number: string;
+          card_status: string;
+          expires_at: string;
+          revoked_at: string | null;
+          student_id: string;
+          first_name: string;
+          last_name: string;
+          admission_number: string;
+          student_status: string;
+          current_class_id: string | null;
+          current_arm_id: string | null;
+          class_name: string | null;
+          arm_name: string | null;
+        }
+      | undefined;
+
+    if (!cardRow) {
+      res.status(404).json({ error: 'No matching Student Digital ID Card found in your school.' });
+      return;
+    }
+
+    const cardValidity = evaluateIdCardValidity({
+      status: cardRow.card_status,
+      expires_at: cardRow.expires_at,
+      revoked_at: cardRow.revoked_at,
+    });
+    if (!cardValidity.valid) {
+      if (cardRow.card_status === 'active' && !cardRow.revoked_at) {
+        db.prepare("UPDATE student_id_cards SET status = 'expired' WHERE id = ? AND status = 'active'").run(
+          cardRow.card_id,
+        );
+      }
+      res.status(403).json({ error: cardValidity.reason });
+      return;
+    }
+
+    if (cardRow.student_status !== 'active') {
+      res.status(403).json({
+        error: `${cardRow.first_name} ${cardRow.last_name}'s enrollment is "${cardRow.student_status}" and cannot be marked active.`,
+      });
+      return;
+    }
+
+    const targetClassId = parsed.data.classId || cardRow.current_class_id;
+    if (!targetClassId) {
+      res.status(400).json({
+        error: `${cardRow.first_name} ${cardRow.last_name} is not assigned to a class yet. Assign a class before marking attendance.`,
+      });
+      return;
+    }
+
+    const settings = ensureAttendanceSettings(schoolId);
+    if (
+      parsed.data.classId &&
+      settings.qr_require_enrolled_class === 1 &&
+      cardRow.current_class_id !== parsed.data.classId
+    ) {
+      res.status(403).json({
+        error: `${cardRow.first_name} ${cardRow.last_name} belongs to ${cardRow.class_name ?? 'another class'}, not the currently selected class.`,
+      });
+      return;
+    }
+
+    const isAdmin = hasPermission(req.auth!.permissions, 'school.attendance.manage');
+    if (!isAdmin && !isTeacherAssignedToClass(schoolId, req.auth!.id, targetClassId)) {
+      res.status(403).json({
+        error: 'You are not assigned to mark attendance for this student’s class.',
+      });
+      return;
+    }
+
+    const classRow = db
+      .prepare('SELECT id, name FROM school_classes WHERE id = ? AND school_id = ?')
+      .get(targetClassId, schoolId) as { id: string; name: string } | undefined;
+    if (!classRow) {
+      res.status(404).json({ error: 'Selected class not found in your school.' });
+      return;
+    }
+
+    const attendanceDate = parsed.data.attendanceDate ?? new Date().toISOString().slice(0, 10);
+    const sessionLabel = parsed.data.sessionLabel.trim() || 'Morning Roll Call';
+    const markStatus = parsed.data.markStatus;
+    const armScopeKey = '__ALL__';
+
+    const curTerm = db
+      .prepare('SELECT id, academic_session_id FROM academic_terms WHERE school_id = ? AND is_current = 1 LIMIT 1')
+      .get(schoolId) as { id: string; academic_session_id: string } | undefined;
+
+    let attSessionId = (
+      db
+        .prepare(`
+          SELECT id FROM attendance_sessions
+          WHERE school_id = ? AND class_id = ? AND arm_scope_key = ? AND attendance_date = ? AND session_label = ?
+        `)
+        .get(schoolId, targetClassId, armScopeKey, attendanceDate, sessionLabel) as
+        | { id: string }
+        | undefined
+    )?.id;
+
+    let alreadyMarked = false;
+    const markedAt = new Date().toISOString();
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!attSessionId) {
+        attSessionId = `ats_${crypto.randomUUID()}`;
+        db.prepare(`
+          INSERT INTO attendance_sessions (
+            id, school_id, academic_session_id, academic_term_id, class_id, arm_id, arm_scope_key,
+            attendance_date, session_label, marked_by_user_id, status
+          ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'open')
+        `).run(
+          attSessionId,
+          schoolId,
+          curTerm?.academic_session_id ?? null,
+          curTerm?.id ?? null,
+          targetClassId,
+          armScopeKey,
+          attendanceDate,
+          sessionLabel,
+          req.auth!.id,
+        );
+      }
+
+      const existingRec = db
+        .prepare('SELECT id, status FROM attendance_records WHERE attendance_session_id = ? AND student_id = ?')
+        .get(attSessionId, cardRow.student_id) as { id: string; status: string } | undefined;
+
+      if (!existingRec) {
+        db.prepare(`
+          INSERT INTO attendance_records (
+            id, school_id, attendance_session_id, student_id, class_id, arm_id,
+            academic_term_id, attendance_date, status, remarks, source, marked_by_user_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'qr', ?)
+        `).run(
+          `atr_${crypto.randomUUID()}`,
+          schoolId,
+          attSessionId,
+          cardRow.student_id,
+          targetClassId,
+          cardRow.current_arm_id,
+          curTerm?.id ?? null,
+          attendanceDate,
+          markStatus,
+          `ID Card QR (${cardRow.card_number})`,
+          req.auth!.id,
+        );
+      } else if (existingRec.status === markStatus) {
+        alreadyMarked = true;
+      } else {
+        db.prepare(`
+          UPDATE attendance_records
+          SET status = ?, remarks = ?, source = 'qr', marked_by_user_id = ?, updated_at = datetime('now')
+          WHERE id = ? AND school_id = ?
+        `).run(
+          markStatus,
+          `ID Card QR (${cardRow.card_number})`,
+          req.auth!.id,
+          existingRec.id,
+          schoolId,
+        );
+
+        db.prepare(`
+          INSERT INTO attendance_audit_logs (
+            id, school_id, attendance_record_id, student_id, old_status, new_status, reason, actor_user_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          `aal_${crypto.randomUUID()}`,
+          schoolId,
+          existingRec.id,
+          cardRow.student_id,
+          existingRec.status,
+          markStatus,
+          `Updated via Digital ID Card QR (${cardRow.card_number})`,
+          req.auth!.id,
+        );
+      }
+
+      db.prepare("UPDATE student_id_cards SET last_used_attendance_at = datetime('now') WHERE id = ?").run(
+        cardRow.card_id,
+      );
+
+      syncStudentTermAttendanceSummaries(schoolId, curTerm?.id ?? null, [cardRow.student_id], req.auth!.id);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error('ID card attendance scan error:', err);
+      res.status(500).json({ error: 'Unable to record attendance from Student Digital ID Card.' });
+      return;
+    }
+
+    recordAuditLog({
+      actorUserId: req.auth!.id,
+      actorEmail: req.auth!.email,
+      actorRole: req.auth!.roleCode,
+      schoolId,
+      authEnvironment: 'school',
+      action: 'school.attendance.id_card_scanned',
+      resourceType: 'student_id_card',
+      resourceId: cardRow.card_id,
+      outcome: 'success',
+      metadata: {
+        studentId: cardRow.student_id,
+        cardNumber: cardRow.card_number,
+        classId: targetClassId,
+        attendanceDate,
+        status: markStatus,
+        alreadyMarked,
+      },
+      ipAddress: getClientIp(req),
+    });
+
+    res.status(alreadyMarked ? 200 : 201).json({
+      ok: true,
+      alreadyMarked,
+      attendanceDate,
+      sessionLabel,
+      status: markStatus,
+      markedAt,
+      student: {
+        id: cardRow.student_id,
+        fullName: `${cardRow.first_name} ${cardRow.last_name}`,
+        admissionNumber: cardRow.admission_number,
+        classId: targetClassId,
+        className: classRow.name,
+        armName: cardRow.arm_name,
+        cardNumber: cardRow.card_number,
+      },
     });
   },
 );

@@ -49,6 +49,7 @@ import { schoolCommunicationsRouter } from './school/communications.ts';
 import { schoolTimetableRouter } from './school/timetable.ts';
 import { schoolWebsiteRouter } from './school/website.ts';
 import { schoolAiRouter } from './school/ai.ts';
+import { schoolIdCardsRouter } from './school/id-cards.ts';
 import {
   createAcademicSessionSchema,
   createSchoolMemberSchema,
@@ -1425,6 +1426,7 @@ schoolRouter.use(schoolCommunicationsRouter);
 schoolRouter.use(schoolTimetableRouter);
 schoolRouter.use(schoolWebsiteRouter);
 schoolRouter.use(schoolAiRouter);
+schoolRouter.use(schoolIdCardsRouter);
 
 schoolRouter.get('/ai-core', requirePermission('ai.core.view'), (_req, res) => {
   res.json(getAiCoreBlueprint());

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { Router } from 'express';
 import { getDb } from '../../db/client.ts';
+import { evaluateAccessCodeStatus, normalizeSchoolAccessCode } from '../access-code-helpers.ts';
 import { getAiCoreBlueprint } from '../ai-core.ts';
 import { recordAuditLog } from '../audit.ts';
 import { resolveConfinedStoragePath, type StoredFileRecord } from '../file-storage.ts';
@@ -14,7 +15,12 @@ import {
   slugifySchoolName,
 } from '../security.ts';
 import { createAuthSession } from '../session-service.ts';
-import { contactInquirySchema, createAdmissionSchema, registerSchoolSchema } from '../validation.ts';
+import {
+  contactInquirySchema,
+  createAdmissionSchema,
+  registerSchoolSchema,
+  verifyAccessCodeSchema,
+} from '../validation.ts';
 
 export const publicRouter = Router();
 
@@ -376,6 +382,61 @@ publicRouter.post('/contact', requireCsrfCheck, (req, res) => {
   });
 });
 
+publicRouter.post('/verify-access-code', requireCsrfCheck, (req, res) => {
+  const ip = getClientIp(req) || 'unknown';
+  const rateKey = `public:verify-code:ip:${ip}`;
+  const limit = checkRateLimit(rateKey, 20, 15);
+  if (!limit.allowed) {
+    res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+    res.status(429).json({ error: 'Too many code verification attempts. Please wait before trying again.' });
+    return;
+  }
+  recordRateLimitedAttempt(rateKey, 20, 15, 15);
+
+  const parsed = verifyAccessCodeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      valid: false,
+      error: parsed.error.issues[0]?.message ?? 'Enter a valid access code.',
+    });
+    return;
+  }
+
+  const normalized = normalizeSchoolAccessCode(parsed.data.accessCode);
+  const db = getDb();
+  const row = db
+    .prepare(`
+      SELECT id, code, intended_school_name, status, expires_at
+      FROM school_access_codes
+      WHERE UPPER(code) = ?
+      LIMIT 1
+    `)
+    .get(normalized) as
+    | {
+        id: string;
+        code: string;
+        intended_school_name: string;
+        status: string;
+        expires_at: string | null;
+      }
+    | undefined;
+
+  const evaluation = evaluateAccessCodeStatus(row);
+  if (!evaluation.valid || !row) {
+    res.status(403).json({
+      valid: false,
+      error: evaluation.reason ?? 'Invalid School Access Code.',
+    });
+    return;
+  }
+
+  res.json({
+    valid: true,
+    code: row.code,
+    intendedSchoolName: row.intended_school_name,
+  });
+});
+
 publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
   const ip = getClientIp(req) || 'unknown';
   const rateKey = `public:register:ip:${ip}`;
@@ -410,6 +471,7 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
   }
 
   const data = parsed.data;
+  const normalizedAccessCode = normalizeSchoolAccessCode(data.accessCode);
   const adminEmail = data.adminEmail.toLowerCase();
   const schoolContactEmail = data.contactEmail.toLowerCase();
   const normalizedSchoolName = data.schoolName.trim().toLowerCase();
@@ -460,14 +522,59 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
   const baseSlug = slugifySchoolName(data.schoolName) || 'school';
   const suffix = crypto.randomBytes(2).toString('hex');
   const slug = `${baseSlug}-${suffix}`;
-  const schoolCode = `DT-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
   const schoolId = `sch_${crypto.randomUUID()}`;
   const userId = `usr_${crypto.randomUUID()}`;
   const membershipId = `mem_${crypto.randomUUID()}`;
   const passwordHash = hashPassword(data.adminPassword);
+  let schoolCode = normalizedAccessCode;
+  let accessCodeId = '';
 
   db.exec('BEGIN IMMEDIATE');
   try {
+    const codeRow = db
+      .prepare(`
+        SELECT id, code, status, expires_at
+        FROM school_access_codes
+        WHERE UPPER(code) = ?
+        LIMIT 1
+      `)
+      .get(normalizedAccessCode) as
+      | { id: string; code: string; status: string; expires_at: string | null }
+      | undefined;
+
+    const codeEval = evaluateAccessCodeStatus(codeRow);
+    if (!codeEval.valid || !codeRow) {
+      db.exec('ROLLBACK');
+      recordAuditLog({
+        actorEmail: adminEmail,
+        actorRole: 'public_visitor',
+        authEnvironment: 'public',
+        action: 'school.registration.access_code_rejected',
+        resourceType: 'school_access_code',
+        resourceId: codeRow?.id ?? '',
+        outcome: 'denied',
+        metadata: { attemptedCode: normalizedAccessCode, reason: codeEval.reason },
+        ipAddress: ip,
+      });
+      res.status(403).json({
+        error: codeEval.reason ?? 'Invalid Platform Owner School Access Code.',
+      });
+      return;
+    }
+
+    accessCodeId = codeRow.id;
+    schoolCode = codeRow.code.toUpperCase();
+
+    const codeConflict = db
+      .prepare('SELECT id FROM schools WHERE UPPER(code) = ?')
+      .get(schoolCode);
+    if (codeConflict) {
+      db.exec('ROLLBACK');
+      res.status(409).json({
+        error: 'This School Code is already assigned to another school. Request a new code from the Platform Owner.',
+      });
+      return;
+    }
     db.prepare(`
       INSERT INTO schools (
         id, name, slug, code, country, city, contact_email, phone, status
@@ -508,6 +615,12 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
       );
     }
 
+    db.prepare(`
+      UPDATE school_access_codes
+      SET status = 'used', used_by_school_id = ?, used_at = datetime('now')
+      WHERE id = ?
+    `).run(schoolId, accessCodeId);
+
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -534,7 +647,7 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
     resourceType: 'school',
     resourceId: schoolId,
     outcome: 'success',
-    metadata: { schoolName: data.schoolName, schoolCode },
+    metadata: { schoolName: data.schoolName, schoolCode, accessCodeId },
     ipAddress: ip,
   });
 

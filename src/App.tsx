@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { BrandLoader } from './components/brand/BrandLoader.tsx';
+import { FeatureActivityIndicator } from './components/brand/FeatureActivityIndicator.tsx';
 import { ProtectedRoute } from './components/auth/ProtectedRoute.tsx';
 import { AuthProvider } from './context/AuthContext.tsx';
 import { ToastProvider } from './context/ToastContext.tsx';
@@ -188,6 +189,21 @@ const StudentPromotionHistoryPage = lazy(() =>
     default: m.StudentPromotionHistoryPage,
   })),
 );
+const StudentIdCardsPage = lazy(() =>
+  import('./pages/school-admin/students/StudentIdCardsPage.tsx').then((m) => ({
+    default: m.StudentIdCardsPage,
+  })),
+);
+const AttendanceOverviewPage = lazy(() =>
+  import('./pages/school-admin/attendance/AttendanceOverviewPage.tsx').then((m) => ({
+    default: m.AttendanceOverviewPage,
+  })),
+);
+const AttendanceRegisterPage = lazy(() =>
+  import('./pages/school-admin/attendance/AttendanceRegisterPage.tsx').then((m) => ({
+    default: m.AttendanceRegisterPage,
+  })),
+);
 
 // Phase 2 — Teachers
 const TeachersPage = lazy(() =>
@@ -340,11 +356,26 @@ const TeacherProfilePage = lazy(() =>
     default: m.TeacherProfilePage,
   })),
 );
+const TeacherAttendancePage = lazy(() =>
+  import('./pages/teachers/TeacherAttendancePage.tsx').then((m) => ({
+    default: m.TeacherAttendancePage,
+  })),
+);
 
 // Student pages (code-split)
 const StudentOverviewPage = lazy(() =>
   import('./pages/students/StudentOverviewPage.tsx').then((m) => ({
     default: m.StudentOverviewPage,
+  })),
+);
+const StudentIdCardPage = lazy(() =>
+  import('./pages/students/StudentIdCardPage.tsx').then((m) => ({
+    default: m.StudentIdCardPage,
+  })),
+);
+const StudentAttendancePage = lazy(() =>
+  import('./pages/students/StudentAttendancePage.tsx').then((m) => ({
+    default: m.StudentAttendancePage,
   })),
 );
 const StudentTermPage = lazy(() =>
@@ -539,17 +570,23 @@ export default function App() {
   return (
     <BrowserRouter>
       <ScrollToTop />
+      <FeatureActivityIndicator />
       <ToastProvider>
         <AuthProvider>
           <Suspense fallback={<RouteFallback />}>
             <Routes>
-              {/* Public Website Routes */}
+              {/* Public Website Routes (supporting both clean paths and dedicated .html entry files) */}
               <Route element={<PublicLayout />}>
                 <Route path="/" element={<HomePage />} />
+                <Route path="/index.html" element={<HomePage />} />
                 <Route path="/about" element={<AboutPage />} />
+                <Route path="/about.html" element={<AboutPage />} />
                 <Route path="/features" element={<FeaturesPage />} />
+                <Route path="/features.html" element={<FeaturesPage />} />
                 <Route path="/contact" element={<ContactPage />} />
+                <Route path="/contact.html" element={<ContactPage />} />
                 <Route path="/register" element={<RegisterSchoolPage />} />
+                <Route path="/register.html" element={<RegisterSchoolPage />} />
                 <Route path="/schools/:slug" element={<PublicSchoolSitePage />} />
                 <Route path="/schools/:slug/admissions" element={<PublicSchoolAdmissionsPage />} />
               </Route>
@@ -598,6 +635,7 @@ export default function App() {
 
                   {/* Students */}
                   <Route path="students" element={<StudentsPage />} />
+                  <Route path="students/id-cards" element={<StudentIdCardsPage />} />
                   <Route path="students/register" element={<StudentRegistrationPage />} />
                   <Route path="students/:studentId" element={<StudentProfilePage />} />
                   <Route path="students/:studentId/edit" element={<StudentEditPage />} />
@@ -607,6 +645,10 @@ export default function App() {
                     element={<StudentPromotionHistoryPage />}
                   />
                   <Route path="promotions" element={<StudentPromotionHistoryPage />} />
+
+                  {/* Attendance */}
+                  <Route path="attendance" element={<AttendanceOverviewPage />} />
+                  <Route path="attendance/register" element={<AttendanceRegisterPage />} />
 
                   {/* Teachers */}
                   <Route path="teachers" element={<TeachersPage />} />
@@ -676,6 +718,7 @@ export default function App() {
               >
                 <Route path="/dashboard/teacher" element={<TeacherLayout />}>
                   <Route index element={<TeacherWorkspacePage />} />
+                  <Route path="attendance" element={<TeacherAttendancePage />} />
                   <Route path="academics" element={<TeacherAcademicWorkspacePage />} />
                   <Route path="academics/scores" element={<TeacherScoreEntryPage />} />
                   <Route path="academics/history" element={<TeacherAssessmentHistoryPage />} />
@@ -695,6 +738,8 @@ export default function App() {
               >
                 <Route path="/dashboard/student" element={<StudentLayout />}>
                   <Route index element={<StudentOverviewPage />} />
+                  <Route path="id-card" element={<StudentIdCardPage />} />
+                  <Route path="attendance" element={<StudentAttendancePage />} />
                   <Route path="results" element={<StudentResultsPage />} />
                   <Route path="report-cards" element={<StudentReportCardsPage />} />
                   <Route path="history" element={<StudentAcademicHistoryPage />} />

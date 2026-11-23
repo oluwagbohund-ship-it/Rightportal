@@ -700,6 +700,21 @@ schoolStudentsRouter.patch(
         studentId,
         schoolId,
       );
+      if (parsed.data.status !== 'active') {
+        db.prepare(`
+          UPDATE student_id_cards
+          SET status = 'revoked',
+              revoked_by_user_id = ?,
+              revoked_reason = ?,
+              revoked_at = datetime('now')
+          WHERE school_id = ? AND student_id = ? AND status = 'active'
+        `).run(
+          req.auth!.id,
+          `Student enrollment status updated to ${parsed.data.status}`,
+          schoolId,
+          studentId,
+        );
+      }
       if (existing.user_id) {
         const memStatus = parsed.data.status === 'active' ? 'active' : 'suspended';
         db.prepare('UPDATE school_memberships SET status = ? WHERE user_id = ? AND school_id = ?').run(

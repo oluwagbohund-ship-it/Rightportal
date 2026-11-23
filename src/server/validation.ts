@@ -6,6 +6,70 @@ export const loginSchema = z.object({
   schoolCode: z.string().trim().max(32).optional(),
 });
 
+export const schoolLoginSchema = z.object({
+  email: z.string().trim().email('Enter a valid email address').max(160),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(128),
+  schoolCode: z
+    .string()
+    .trim()
+    .min(3, 'Unique School Code is required to enter the platform')
+    .max(32),
+});
+
+export const studentQrLoginSchema = z.object({
+  qrToken: z.string().trim().min(10, 'Scan or enter a valid Digital ID Card QR code').max(512),
+  schoolCode: z.string().trim().max(32).optional().default(''),
+});
+
+export const issueStudentIdCardSchema = z.object({
+  validityDays: z.number().int().min(30).max(1825).optional().default(365),
+});
+
+export const revokeStudentIdCardSchema = z.object({
+  reason: z.string().trim().max(240).optional().default('Revoked by School Administration'),
+});
+
+export const scanStudentIdAttendanceSchema = z.object({
+  qrToken: z.string().trim().min(10, 'Scan or enter a valid Student ID Card QR code').max(512),
+  classId: z.string().trim().max(80).optional().nullable(),
+  attendanceDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD date')
+    .optional(),
+  sessionLabel: z.string().trim().min(2).max(60).optional().default('Morning Roll Call'),
+  markStatus: z.enum(['present', 'late']).optional().default('present'),
+});
+
+export const verifyAccessCodeSchema = z.object({
+  accessCode: z
+    .string()
+    .trim()
+    .min(4, 'Enter the unique code issued by the Platform Owner')
+    .max(32),
+});
+
+export const createSchoolAccessCodeSchema = z.object({
+  intendedSchoolName: z.string().trim().max(140).optional().default(''),
+  recipientEmail: z
+    .string()
+    .trim()
+    .email('Enter a valid recipient email')
+    .max(160)
+    .or(z.literal(''))
+    .optional()
+    .default(''),
+  customCode: z
+    .string()
+    .trim()
+    .min(4, 'Custom code must be at least 4 characters')
+    .max(24, 'Custom code must be at most 24 characters')
+    .regex(/^[A-Za-z0-9-]+$/, 'Code may contain only letters, numbers, and hyphens')
+    .or(z.literal(''))
+    .optional()
+    .default(''),
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional().default(null),
+});
+
 export const bootstrapOwnerSchema = z.object({
   fullName: z.string().trim().min(2, 'Full name is required').max(120),
   email: z.string().trim().email('Enter a valid email address').max(160),
@@ -19,6 +83,11 @@ export const bootstrapOwnerSchema = z.object({
 });
 
 export const registerSchoolSchema = z.object({
+  accessCode: z
+    .string()
+    .trim()
+    .min(4, 'A unique Platform Owner access code is required to create a school')
+    .max(32),
   schoolName: z.string().trim().min(3, 'School name must be at least 3 characters').max(140),
   country: z.string().trim().min(2, 'Country is required').max(80),
   city: z.string().trim().min(2, 'City is required').max(80),

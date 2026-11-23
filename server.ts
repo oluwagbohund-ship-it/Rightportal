@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDb, verifyDatabaseIntegrity } from './src/db/client.ts';
 import { securityHeadersMiddleware } from './src/server/middleware.ts';
+import { resolvePublicHtmlFile, rewriteDevPublicUrl } from './src/server/public-pages.ts';
 import { authRouter } from './src/server/routes/auth.ts';
 import { ownerRouter } from './src/server/routes/owner.ts';
 import { publicRouter } from './src/server/routes/public.ts';
@@ -57,6 +58,12 @@ async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';
 
   if (!isProd) {
+    app.use((req, _res, next) => {
+      if (req.method === 'GET') {
+        req.url = rewriteDevPublicUrl(req.url);
+      }
+      next();
+    });
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -66,12 +73,18 @@ async function startServer() {
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      const indexFile = path.join(distDir, 'index.html');
-      if (fs.existsSync(indexFile)) {
-        res.sendFile(indexFile);
+    app.get('*', (req, res) => {
+      const targetHtml = resolvePublicHtmlFile(req.path);
+      const htmlFile = path.join(distDir, targetHtml);
+      if (fs.existsSync(htmlFile)) {
+        res.sendFile(htmlFile);
       } else {
-        res.status(404).send('Build output missing. Run npm run build.');
+        const indexFile = path.join(distDir, 'index.html');
+        if (fs.existsSync(indexFile)) {
+          res.sendFile(indexFile);
+        } else {
+          res.status(404).send('Build output missing. Run npm run build.');
+        }
       }
     });
   }

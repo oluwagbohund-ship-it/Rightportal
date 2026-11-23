@@ -113,19 +113,19 @@ export function TeacherWorkspacePage() {
         description="Tenant-scoped educator workspace displaying your assigned classes, subjects, and authorized classroom students."
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link to="/dashboard/teacher/attendance">
+              <Button type="button" size="sm" className="whitespace-nowrap shrink-0">
+                Scan ID Attendance
+              </Button>
+            </Link>
             <Link to="/dashboard/teacher/academics/scores">
-              <Button type="button" size="sm">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
                 Enter CA &amp; Exam Scores
               </Button>
             </Link>
             <Link to="/dashboard/teacher/academics/comments">
-              <Button type="button" size="sm" variant="outline">
-                Attendance &amp; Remarks
-              </Button>
-            </Link>
-            <Link to="/dashboard/teacher/sessions">
-              <Button type="button" size="sm" variant="outline">
-                Academic Calendar
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+                Remarks &amp; Traits
               </Button>
             </Link>
           </div>

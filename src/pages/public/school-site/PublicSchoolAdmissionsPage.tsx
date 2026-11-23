@@ -4,6 +4,7 @@ import { BrandLoader } from '../../../components/brand/BrandLoader.tsx';
 import { Alert } from '../../../components/ui/alert.tsx';
 import { Button } from '../../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card.tsx';
+import { Select } from '../../../components/ui/select.tsx';
 import { apiRequest } from '../../../lib/api.ts';
 
 export function PublicSchoolAdmissionsPage() {
@@ -155,30 +156,30 @@ export function PublicSchoolAdmissionsPage() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-700">Gender *</label>
-                    <select
+                    <label htmlFor="pub-adm-gender" className="text-xs font-medium text-slate-700">Gender *</label>
+                    <Select
+                      id="pub-adm-gender"
                       value={gender}
                       onChange={(e) => setGender(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
                     >
                       <option value="Female">Female</option>
                       <option value="Male">Male</option>
                       <option value="Other">Other</option>
-                    </select>
+                    </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-700">Desired Class *</label>
-                    <select
+                    <label htmlFor="pub-adm-class" className="text-xs font-medium text-slate-700">Desired Class *</label>
+                    <Select
+                      id="pub-adm-class"
                       value={classId}
                       onChange={(e) => setClassId(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
                     >
                       {data.classes?.map((c: any) => (
                         <option key={c.id} value={c.id}>
                           {c.name} ({c.section})
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                 </div>
 

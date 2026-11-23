@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PageHeader } from '../../components/dashboard/PageHeader.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
@@ -47,7 +48,14 @@ export function StudentAttendancePage() {
     <div className="space-y-6">
       <PageHeader
         title="My Attendance & QR Check-In"
-        description="View your attendance history, punctuality rates, and check in live using QR session tokens provided by your teacher."
+        description="View your attendance history, punctuality rates, and present your Digital ID card or session QR token for roll call."
+        actions={
+          <Link to="/dashboard/student/id-card">
+            <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+              Open My Digital ID Card
+            </Button>
+          </Link>
+        }
       />
 
       {error ? <Alert variant="error">{error}</Alert> : null}

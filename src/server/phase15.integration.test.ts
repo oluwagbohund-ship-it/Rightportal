@@ -147,6 +147,8 @@ let schoolACookie = '';
 let schoolBCookie = '';
 let schoolAId = '';
 let schoolBId = '';
+let schoolACode = '';
+let schoolBCode = '';
 let teacherACookie = '';
 let studentACookie = '';
 let teacherAUserId = '';
@@ -177,10 +179,85 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
   });
   assert.equal(bootTwice.status, 409);
 
-  // 2. Register School A & School B
+  // 2. School creation must require a valid Platform Owner access code
+  const regNoCode = await api('/api/public/register-school', {
+    method: 'POST',
+    body: {
+      schoolName: 'Unauthorized Academy',
+      country: 'Nigeria',
+      city: 'Lagos',
+      contactEmail: 'unauth@alpha.edu',
+      adminFullName: 'Unauth Principal',
+      adminEmail: 'unauth-principal@alpha.edu',
+      adminPassword: 'AlphaPassword2026',
+    },
+  });
+  assert.equal(regNoCode.status, 400);
+
+  const regBadCode = await api('/api/public/register-school', {
+    method: 'POST',
+    body: {
+      accessCode: 'DT-INVALID1',
+      schoolName: 'Unauthorized Academy',
+      country: 'Nigeria',
+      city: 'Lagos',
+      contactEmail: 'unauth@alpha.edu',
+      adminFullName: 'Unauth Principal',
+      adminEmail: 'unauth-principal@alpha.edu',
+      adminPassword: 'AlphaPassword2026',
+    },
+  });
+  assert.equal(regBadCode.status, 403);
+
+  // Platform Owner issues unique codes (including one to test revocation)
+  const issueRevoked = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Revoked School' },
+  });
+  assert.equal(issueRevoked.status, 201);
+  const revokedCodeObj = issueRevoked.json.accessCode as { id: string; code: string };
+  const revokeRes = await api(`/api/owner/school-access-codes/${revokedCodeObj.id}/revoke`, {
+    method: 'PATCH',
+    cookie: ownerCookie,
+  });
+  assert.equal(revokeRes.status, 200);
+
+  const regWithRevoked = await api('/api/public/register-school', {
+    method: 'POST',
+    body: {
+      accessCode: revokedCodeObj.code,
+      schoolName: 'Revoked School',
+      country: 'Nigeria',
+      city: 'Lagos',
+      contactEmail: 'revoked@alpha.edu',
+      adminFullName: 'Revoked Principal',
+      adminEmail: 'revoked-principal@alpha.edu',
+      adminPassword: 'AlphaPassword2026',
+    },
+  });
+  assert.equal(regWithRevoked.status, 403);
+
+  const issueA = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Alpha Model Academy' },
+  });
+  assert.equal(issueA.status, 201);
+  schoolACode = (issueA.json.accessCode as { code: string }).code;
+
+  const verifyA = await api('/api/public/verify-access-code', {
+    method: 'POST',
+    body: { accessCode: schoolACode },
+  });
+  assert.equal(verifyA.status, 200);
+  assert.equal(verifyA.json.valid, true);
+
+  // Register School A & School B using Platform Owner codes
   const regA = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolACode,
       schoolName: 'Alpha Model Academy',
       country: 'Nigeria',
       city: 'Lagos',
@@ -194,11 +271,37 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
   assert.equal(regA.status, 201);
   schoolACookie = regA.cookie!;
   schoolAId = (regA.json.school as { id: string }).id;
+  assert.equal((regA.json.school as { code: string }).code, schoolACode);
 
-  // Duplicate school blocked
+  // Reusing the same access code must fail
+  const reuseCodeRes = await api('/api/public/register-school', {
+    method: 'POST',
+    body: {
+      accessCode: schoolACode,
+      schoolName: 'Clone Academy',
+      country: 'Nigeria',
+      city: 'Enugu',
+      contactEmail: 'clone@alpha.edu',
+      adminFullName: 'Clone Principal',
+      adminEmail: 'clone@alpha.edu',
+      adminPassword: 'AlphaPassword2026',
+    },
+  });
+  assert.equal(reuseCodeRes.status, 403);
+
+  // Duplicate school blocked even with a fresh code
+  const issueB = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Beta High School' },
+  });
+  assert.equal(issueB.status, 201);
+  schoolBCode = (issueB.json.accessCode as { code: string }).code;
+
   const dupSchool = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolBCode,
       schoolName: 'alpha model academy',
       country: 'Nigeria',
       city: 'lagos',
@@ -213,6 +316,7 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
   const regB = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolBCode,
       schoolName: 'Beta High School',
       country: 'Nigeria',
       city: 'Abuja',
@@ -226,7 +330,13 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
   schoolBCookie = regB.cookie!;
   schoolBId = (regB.json.school as { id: string }).id;
 
-  // 3. Cross-environment boundary rejection
+  // 3. Cross-environment boundary rejection & mandatory schoolCode at school login
+  const schoolLoginWithoutCode = await api('/api/auth/school/login', {
+    method: 'POST',
+    body: { email: 'principal@alpha.edu', password: 'AlphaPassword2026' },
+  });
+  assert.equal(schoolLoginWithoutCode.status, 400);
+
   const schoolAdminOnWorkers = await api('/api/auth/workers/login', {
     method: 'POST',
     body: { email: 'principal@alpha.edu', password: 'AlphaPassword2026' },
@@ -235,7 +345,7 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
 
   const ownerOnSchool = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'owner@davetimi.com', password: 'OwnerStrongPassword2026' },
+    body: { schoolCode: schoolACode, email: 'owner@davetimi.com', password: 'OwnerStrongPassword2026' },
   });
   assert.equal(ownerOnSchool.status, 403);
 
@@ -247,13 +357,13 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
   for (let i = 0; i < 5; i++) {
     const failRes = await api('/api/auth/school/login', {
       method: 'POST',
-      body: { email: 'ratelimit-victim@alpha.edu', password: 'WrongPassword123' },
+      body: { schoolCode: schoolACode, email: 'ratelimit-victim@alpha.edu', password: 'WrongPassword123' },
     });
     assert.equal(failRes.status, 401);
   }
   const lockedRes = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'ratelimit-victim@alpha.edu', password: 'WrongPassword123' },
+    body: { schoolCode: schoolACode, email: 'ratelimit-victim@alpha.edu', password: 'WrongPassword123' },
   });
   assert.equal(lockedRes.status, 429);
   assert.ok(Number(lockedRes.res.headers.get('retry-after')) > 0);
@@ -262,7 +372,7 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
 test('Session rotation invalidates prior token and logout-all revokes all sessions', async () => {
   const login = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'principal@beta.edu', password: 'BetaPassword2026' },
+    body: { schoolCode: schoolBCode, email: 'principal@beta.edu', password: 'BetaPassword2026' },
   });
   assert.equal(login.status, 200);
   const firstCookie = login.cookie!;
@@ -289,7 +399,7 @@ test('Session rotation invalidates prior token and logout-all revokes all sessio
   // Re-establish valid School B session for subsequent cross-tenant tests
   const reLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'principal@beta.edu', password: 'BetaPassword2026' },
+    body: { schoolCode: schoolBCode, email: 'principal@beta.edu', password: 'BetaPassword2026' },
   });
   assert.equal(reLogin.status, 200);
   schoolBCookie = reLogin.cookie!;
@@ -326,13 +436,13 @@ test('File upload validation, path confinement, tenant isolation, and role permi
 
   const teacherLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'teacher@alpha.edu', password: 'TeacherPassword2026' },
+    body: { schoolCode: schoolACode, email: 'teacher@alpha.edu', password: 'TeacherPassword2026' },
   });
   teacherACookie = teacherLogin.cookie!;
 
   const studentLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'student@alpha.edu', password: 'StudentPassword2026' },
+    body: { schoolCode: schoolACode, email: 'student@alpha.edu', password: 'StudentPassword2026' },
   });
   studentACookie = studentLogin.cookie!;
 
@@ -503,7 +613,7 @@ test('Password recovery link resets password, invalidates single-use token, and 
   // Logging in with new password succeeds
   const newLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'teacher@alpha.edu', password: 'NewTeacherPassword2026' },
+    body: { schoolCode: schoolACode, email: 'teacher@alpha.edu', password: 'NewTeacherPassword2026' },
   });
   assert.equal(newLogin.status, 200);
 });
@@ -528,7 +638,7 @@ test('Suspending a school tenant immediately revokes active tenant sessions', as
   // New login blocked while suspended
   const loginBlocked = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'principal@alpha.edu', password: 'AlphaPassword2026' },
+    body: { schoolCode: schoolACode, email: 'principal@alpha.edu', password: 'AlphaPassword2026' },
   });
   assert.equal(loginBlocked.status, 403);
 });

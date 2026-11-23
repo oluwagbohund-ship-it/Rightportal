@@ -32,6 +32,88 @@
   font-variant-numeric: tabular-nums;
 }
 
+@keyframes dt-logo-roll {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.04);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+.animate-logo-roll {
+  animation: dt-logo-roll 0.95s linear infinite;
+}
+
+@keyframes dt-elastic-pop {
+  0% {
+    opacity: 0.45;
+    transform: translateY(10px) scale(0.985);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.008);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dt-elastic-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+.elastic-card {
+  transition:
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 200ms ease,
+    background-color 200ms ease;
+  will-change: transform;
+}
+
+.elastic-card:hover {
+  transform: translateY(-4px);
+}
+
+.elastic-card:active {
+  transform: translateY(-1px) scale(0.988);
+}
+
+.elastic-interactive {
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.elastic-interactive:hover {
+  transform: translateY(-2px);
+}
+
+.elastic-interactive:active {
+  transform: scale(0.975);
+}
+
+.elastic-panel-swap {
+  animation: dt-elastic-pop 320ms cubic-bezier(0.22, 1.28, 0.36, 1) both;
+}
+
+.elastic-float {
+  animation: dt-elastic-float 5.5s ease-in-out infinite;
+}
+
 @media print {
   @page {
     size: A4 portrait;
@@ -62,5 +144,23 @@
     margin: 0 !important;
     max-width: 100% !important;
   }
-}
 
+  body.dt-printing-id-card * {
+    visibility: hidden !important;
+  }
+
+  body.dt-printing-id-card .print-id-card-root,
+  body.dt-printing-id-card .print-id-card-root * {
+    visibility: visible !important;
+  }
+
+  body.dt-printing-id-card .print-id-card-root {
+    position: fixed !important;
+    left: 50% !important;
+    top: 24px !important;
+    transform: translateX(-50%) !important;
+    width: 100% !important;
+    max-width: 440px !important;
+    z-index: 9999 !important;
+  }
+}

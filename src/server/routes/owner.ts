@@ -9,6 +9,10 @@ import {
 } from '../../db/backup.ts';
 import { getDb, verifyDatabaseIntegrity } from '../../db/client.ts';
 import {
+  generateUniqueSchoolAccessCode,
+  normalizeSchoolAccessCode,
+} from '../access-code-helpers.ts';
+import {
   getAiCoreBlueprint,
   getGeminiStatus,
   runGroundedAiCoreQuery,
@@ -44,6 +48,7 @@ import {
 import {
   createBackupSchema,
   createPlatformNotificationSchema,
+  createSchoolAccessCodeSchema,
   createWorkforceMemberSchema,
   restoreBackupSchema,
   updatePlatformSettingsSchema,
@@ -91,6 +96,10 @@ ownerRouter.get('/overview', requirePermission('platform.overview.read'), (_req,
     .prepare('SELECT COUNT(*) AS count FROM contact_inquiries')
     .get() as { count: number };
 
+  const availableAccessCodesRow = db
+    .prepare("SELECT COUNT(*) AS count FROM school_access_codes WHERE status = 'available'")
+    .get() as { count: number };
+
   const recentAudits = db
     .prepare(`
       SELECT id, actor_email, actor_role, auth_environment, action, resource_type, resource_id, outcome, created_at
@@ -110,6 +119,7 @@ ownerRouter.get('/overview', requirePermission('platform.overview.read'), (_req,
       schoolMembersCount: userCounts.school_members ?? 0,
       activeAuthSessions: sessionCount.count ?? 0,
       contactInquiriesCount: inquiryCount.count ?? 0,
+      availableAccessCodesCount: availableAccessCodesRow.count ?? 0,
     },
     recentAudits,
   });
@@ -190,6 +200,175 @@ ownerRouter.patch(
     });
 
     res.json({ id: schoolId, status: parsed.data.status, revokedSessions });
+  },
+);
+
+ownerRouter.get(
+  '/school-access-codes',
+  requirePermission('platform.schools.read'),
+  (_req, res) => {
+    const db = getDb();
+    const codes = db
+      .prepare(`
+        SELECT
+          sac.id, sac.code, sac.intended_school_name, sac.recipient_email,
+          sac.status, sac.expires_at, sac.used_at, sac.created_at,
+          sac.used_by_school_id,
+          creator.email AS created_by_email,
+          sch.name AS used_by_school_name
+        FROM school_access_codes sac
+        LEFT JOIN users creator ON creator.id = sac.created_by_user_id
+        LEFT JOIN schools sch ON sch.id = sac.used_by_school_id
+        ORDER BY sac.created_at DESC
+      `)
+      .all();
+    res.json({ codes });
+  },
+);
+
+ownerRouter.post(
+  '/school-access-codes',
+  requireCsrfCheck,
+  requirePermission('platform.schools.manage'),
+  (req: AuthenticatedRequest, res) => {
+    const parsed = createSchoolAccessCodeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({
+        error: parsed.error.issues[0]?.message ?? 'Invalid access code configuration.',
+      });
+      return;
+    }
+
+    const db = getDb();
+    const { intendedSchoolName, recipientEmail, customCode, expiresInDays } = parsed.data;
+
+    let code = customCode ? normalizeSchoolAccessCode(customCode) : '';
+    if (code) {
+      const existingCode = db
+        .prepare('SELECT id FROM school_access_codes WHERE UPPER(code) = ?')
+        .get(code);
+      const existingSchool = db
+        .prepare('SELECT id FROM schools WHERE UPPER(code) = ?')
+        .get(code);
+      if (existingCode || existingSchool) {
+        res.status(409).json({
+          error: 'This code is already assigned or in use. Choose another custom code or leave blank to auto-generate.',
+        });
+        return;
+      }
+    } else {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const candidate = generateUniqueSchoolAccessCode('DT');
+        const existsInCodes = db
+          .prepare('SELECT id FROM school_access_codes WHERE UPPER(code) = ?')
+          .get(candidate);
+        const existsInSchools = db
+          .prepare('SELECT id FROM schools WHERE UPPER(code) = ?')
+          .get(candidate);
+        if (!existsInCodes && !existsInSchools) {
+          code = candidate;
+          break;
+        }
+      }
+      if (!code) {
+        res.status(500).json({ error: 'Unable to allocate a unique access code. Please retry.' });
+        return;
+      }
+    }
+
+    const id = `sac_${crypto.randomUUID()}`;
+    const expiresAt = expiresInDays
+      ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+    db.prepare(`
+      INSERT INTO school_access_codes (
+        id, code, intended_school_name, recipient_email, status, created_by_user_id, expires_at
+      ) VALUES (?, ?, ?, ?, 'available', ?, ?)
+    `).run(
+      id,
+      code,
+      intendedSchoolName,
+      recipientEmail.toLowerCase(),
+      req.auth!.id,
+      expiresAt,
+    );
+
+    const created = db
+      .prepare(`
+        SELECT
+          sac.id, sac.code, sac.intended_school_name, sac.recipient_email,
+          sac.status, sac.expires_at, sac.used_at, sac.created_at,
+          sac.used_by_school_id,
+          creator.email AS created_by_email,
+          NULL AS used_by_school_name
+        FROM school_access_codes sac
+        LEFT JOIN users creator ON creator.id = sac.created_by_user_id
+        WHERE sac.id = ?
+      `)
+      .get(id);
+
+    recordAuditLog({
+      actorUserId: req.auth!.id,
+      actorEmail: req.auth!.email,
+      actorRole: req.auth!.roleCode,
+      authEnvironment: 'workers',
+      action: 'platform.school_access_code.created',
+      resourceType: 'school_access_code',
+      resourceId: id,
+      outcome: 'success',
+      metadata: { code, intendedSchoolName, expiresAt },
+      ipAddress: getClientIp(req),
+    });
+
+    res.status(201).json({ accessCode: created });
+  },
+);
+
+ownerRouter.patch(
+  '/school-access-codes/:codeId/revoke',
+  requireCsrfCheck,
+  requirePermission('platform.schools.manage'),
+  (req: AuthenticatedRequest, res) => {
+    const db = getDb();
+    const { codeId } = req.params;
+    const row = db
+      .prepare('SELECT id, code, status FROM school_access_codes WHERE id = ?')
+      .get(codeId) as { id: string; code: string; status: string } | undefined;
+
+    if (!row) {
+      res.status(404).json({ error: 'School access code not found.' });
+      return;
+    }
+
+    if (row.status === 'used') {
+      res.status(409).json({
+        error: 'Cannot revoke a code that has already been redeemed to create a school.',
+      });
+      return;
+    }
+
+    if (row.status === 'revoked') {
+      res.json({ id: codeId, status: 'revoked' });
+      return;
+    }
+
+    db.prepare("UPDATE school_access_codes SET status = 'revoked' WHERE id = ?").run(codeId);
+
+    recordAuditLog({
+      actorUserId: req.auth!.id,
+      actorEmail: req.auth!.email,
+      actorRole: req.auth!.roleCode,
+      authEnvironment: 'workers',
+      action: 'platform.school_access_code.revoked',
+      resourceType: 'school_access_code',
+      resourceId: codeId,
+      outcome: 'success',
+      metadata: { code: row.code },
+      ipAddress: getClientIp(req),
+    });
+
+    res.json({ id: codeId, status: 'revoked' });
   },
 );
 

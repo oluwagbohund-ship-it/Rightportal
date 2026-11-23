@@ -119,6 +119,8 @@ after(async () => {
 let schoolACookie = '';
 let schoolBCookie = '';
 let ownerCookie = '';
+let schoolACode = '';
+let schoolBCode = '';
 let classJss1Id = '';
 let classJss2Id = '';
 let armJss1AId = '';
@@ -148,9 +150,26 @@ test('Phase 2 Setup: Bootstrap Owner, register two isolated school tenants', asy
   assert.equal(boot.status, 201);
   ownerCookie = boot.cookie!;
 
+  const codeA = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Horizon Scholars College' },
+  });
+  assert.equal(codeA.status, 201);
+  schoolACode = (codeA.json.accessCode as { code: string }).code;
+
+  const codeB = await api('/api/owner/school-access-codes', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: { intendedSchoolName: 'Summit Crest Academy' },
+  });
+  assert.equal(codeB.status, 201);
+  schoolBCode = (codeB.json.accessCode as { code: string }).code;
+
   const regA = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolACode,
       schoolName: 'Horizon Scholars College',
       country: 'Nigeria',
       city: 'Lagos',
@@ -167,6 +186,7 @@ test('Phase 2 Setup: Bootstrap Owner, register two isolated school tenants', asy
   const regB = await api('/api/public/register-school', {
     method: 'POST',
     body: {
+      accessCode: schoolBCode,
       schoolName: 'Summit Crest Academy',
       country: 'Ghana',
       city: 'Accra',
@@ -357,7 +377,7 @@ test('Teacher registration, Subject creation, class-subject & teacher-subject as
   // Teacher logs in and verifies workspace
   const tchLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'kemi.balogun@horizon.edu', password: 'TeacherPassword2026' },
+    body: { schoolCode: schoolACode, email: 'kemi.balogun@horizon.edu', password: 'TeacherPassword2026' },
   });
   assert.equal(tchLogin.status, 200);
   teacherCookie = tchLogin.cookie!;
@@ -486,7 +506,7 @@ test('Student registration, duplicate admission number block, archived class rej
   // Student logs in and sees their own enrollment & promotion history
   const stuLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'chidi.student@horizon.edu', password: 'StudentPassword2026' },
+    body: { schoolCode: schoolACode, email: 'chidi.student@horizon.edu', password: 'StudentPassword2026' },
   });
   assert.equal(stuLogin.status, 200);
   student1Cookie = stuLogin.cookie!;
@@ -533,7 +553,7 @@ test('Parent registration, guardian linking, and verified Parent ward-only isola
   // Parent logs in and sees ONLY linked ward
   const parLogin = await api('/api/auth/school/login', {
     method: 'POST',
-    body: { email: 'grace.parent@horizon.edu', password: 'ParentPassword2026' },
+    body: { schoolCode: schoolACode, email: 'grace.parent@horizon.edu', password: 'ParentPassword2026' },
   });
   assert.equal(parLogin.status, 200);
   parent1Cookie = parLogin.cookie!;

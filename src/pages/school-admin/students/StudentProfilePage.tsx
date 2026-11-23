@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, Edit3, FileText } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Edit3, FileText, IdCard, RefreshCw, ShieldOff } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { PageHeader } from '../../../components/dashboard/PageHeader.tsx';
+import { DigitalStudentIdCard } from '../../../components/students/DigitalStudentIdCard.tsx';
 import { Alert } from '../../../components/ui/alert.tsx';
 import { Button } from '../../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card.tsx';
@@ -15,6 +16,7 @@ import type {
   PromotionRecommendationRecord,
   ResultPublicationRecord,
   StudentClassHistoryRecord,
+  StudentDigitalIdCardRecord,
   StudentGuardianRecord,
   StudentRecord,
   StudentSubjectEnrollmentRecord,
@@ -35,6 +37,8 @@ export function StudentProfilePage() {
   const [promotionRecommendations, setPromotionRecommendations] = useState<
     PromotionRecommendationRecord[]
   >([]);
+  const [idCard, setIdCard] = useState<StudentDigitalIdCardRecord | null>(null);
+  const [issuingIdCard, setIssuingIdCard] = useState(false);
 
   const [pendingStatus, setPendingStatus] = useState<
     'active' | 'suspended' | 'graduated' | 'withdrawn' | null
@@ -46,7 +50,7 @@ export function StudentProfilePage() {
     setLoading(true);
     setError(null);
     try {
-      const [res, academicRes] = await Promise.all([
+      const [res, academicRes, idCardRes] = await Promise.all([
         apiRequest<{
           student: StudentRecord;
           guardians: StudentGuardianRecord[];
@@ -62,6 +66,9 @@ export function StudentProfilePage() {
           termSummaries: [],
           promotions: [],
         })),
+        apiRequest<{ card: StudentDigitalIdCardRecord | null }>(
+          `/api/school/students/${studentId}/id-card`,
+        ).catch(() => ({ card: null })),
       ]);
       setStudent(res.student);
       setGuardians(res.guardians ?? []);
@@ -70,6 +77,7 @@ export function StudentProfilePage() {
       setSubjectEnrollments(academicRes.subjectEnrollments ?? []);
       setTermSummaries(academicRes.termSummaries ?? []);
       setPromotionRecommendations(academicRes.promotions ?? []);
+      setIdCard(idCardRes.card ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load student profile.');
     } finally {
@@ -80,6 +88,59 @@ export function StudentProfilePage() {
   useEffect(() => {
     void loadProfile();
   }, [loadProfile]);
+
+  const handleIssueOrRotateIdCard = async () => {
+    if (!studentId) return;
+    setIssuingIdCard(true);
+    try {
+      const res = await apiRequest<{ card: StudentDigitalIdCardRecord }>(
+        `/api/school/students/${studentId}/id-card`,
+        {
+          method: 'POST',
+          body: {},
+        },
+      );
+      setIdCard(res.card);
+      showToast({
+        variant: 'success',
+        title: 'Digital ID card issued',
+        description: `Issued ${res.card.card_number} for ${res.card.student.first_name} ${res.card.student.last_name}.`,
+      });
+    } catch (err) {
+      showToast({
+        variant: 'error',
+        title: 'ID card issuance failed',
+        description: err instanceof Error ? err.message : 'Unable to issue Digital ID card.',
+      });
+    } finally {
+      setIssuingIdCard(false);
+    }
+  };
+
+  const handleRevokeIdCard = async () => {
+    if (!idCard) return;
+    setIssuingIdCard(true);
+    try {
+      await apiRequest(`/api/school/id-cards/${idCard.id}/revoke`, {
+        method: 'PATCH',
+        body: { reason: 'Revoked from Student Profile by School Admin' },
+      });
+      showToast({
+        variant: 'success',
+        title: 'Digital ID card revoked',
+        description: `Card ${idCard.card_number} has been deactivated.`,
+      });
+      await loadProfile();
+    } catch (err) {
+      showToast({
+        variant: 'error',
+        title: 'Revoke failed',
+        description: err instanceof Error ? err.message : 'Unable to revoke Digital ID card.',
+      });
+    } finally {
+      setIssuingIdCard(false);
+    }
+  };
 
   const confirmStatusUpdate = async () => {
     if (!studentId || !pendingStatus) return;
@@ -226,6 +287,69 @@ export function StudentProfilePage() {
                   )}
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 no-print">
+              <div>
+                <div className="flex items-center gap-2">
+                  <IdCard className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
+                  <CardTitle>Digital Student ID Card</CardTitle>
+                </div>
+                <CardDescription>
+                  Cryptographic QR badge used for Student Portal login and classroom attendance check-in.
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {idCard && idCard.status === 'active' ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={issuingIdCard}
+                      onClick={() => void handleIssueOrRotateIdCard()}
+                      className="whitespace-nowrap shrink-0"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Rotate QR Card</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={issuingIdCard}
+                      onClick={() => void handleRevokeIdCard()}
+                      className="text-red-600 hover:bg-red-50 whitespace-nowrap shrink-0"
+                    >
+                      <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Revoke Card</span>
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={issuingIdCard || student.status !== 'active'}
+                    onClick={() => void handleIssueOrRotateIdCard()}
+                    className="whitespace-nowrap shrink-0"
+                  >
+                    <IdCard className="h-4 w-4" aria-hidden="true" />
+                    <span>{issuingIdCard ? 'Issuing Card...' : 'Issue Digital ID Card'}</span>
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {idCard ? (
+                <DigitalStudentIdCard card={idCard} showActions />
+              ) : (
+                <p className="text-xs text-slate-500">
+                  No Digital ID card has been issued for this student yet. Click{' '}
+                  <span className="font-semibold text-[#0F172A]">Issue Digital ID Card</span> above to generate a printable QR credential.
+                </p>
+              )}
             </CardContent>
           </Card>
 

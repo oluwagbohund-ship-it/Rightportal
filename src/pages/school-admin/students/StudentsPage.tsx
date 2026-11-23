@@ -119,13 +119,18 @@ export function StudentsPage() {
         description="Search enrolled students, filter by class, admission year, or enrollment status, and access profiles, documents, and promotions."
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link to="/dashboard/school-admin/students/id-cards">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+                Digital ID Cards
+              </Button>
+            </Link>
             <Link to="/dashboard/school-admin/promotions">
-              <Button type="button" size="sm" variant="outline">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
                 Promotions &amp; Transfers
               </Button>
             </Link>
             <Link to="/dashboard/school-admin/students/register">
-              <Button type="button" size="sm">
+              <Button type="button" size="sm" className="whitespace-nowrap shrink-0">
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 <span>Register Student</span>
               </Button>
