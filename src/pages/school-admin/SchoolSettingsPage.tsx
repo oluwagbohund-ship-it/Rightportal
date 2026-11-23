@@ -38,6 +38,39 @@ export function SchoolSettingsPage() {
   const [admissionNumberFormat, setAdmissionNumberFormat] = useState('{PREFIX}/{YEAR}/{SEQ}');
   const [admissionNextSeq, setAdmissionNextSeq] = useState('1');
   const [applicationRefPrefix, setApplicationRefPrefix] = useState('APP');
+  const [telegramToken, setTelegramToken] = useState('');
+  const [telegramStatus, setTelegramStatus] = useState<{
+    bot_configured: boolean;
+    linked_accounts_count: number;
+    bot_username: string;
+  } | null>(null);
+  const [configuringTelegram, setConfiguringTelegram] = useState(false);
+
+  useEffect(() => {
+    apiRequest<{ bot_configured: boolean; linked_accounts_count: number; bot_username: string }>('/api/telegram/status')
+      .then((res) => setTelegramStatus(res))
+      .catch(() => {});
+  }, []);
+
+  const handleConfigureTelegram = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!telegramToken.trim()) return;
+    setConfiguringTelegram(true);
+    try {
+      const res = await apiRequest<{ bot_username: string; message: string }>('/api/telegram/configure', {
+        method: 'POST',
+        body: JSON.stringify({ bot_token: telegramToken.trim() }),
+      });
+      showToast({ variant: 'success', title: 'Telegram Bot Connected', description: res.message });
+      setTelegramToken('');
+      const statusRes = await apiRequest<{ bot_configured: boolean; linked_accounts_count: number; bot_username: string }>('/api/telegram/status');
+      setTelegramStatus(statusRes);
+    } catch (err) {
+      showToast({ variant: 'error', title: 'Connection Failed', description: err instanceof Error ? err.message : 'Invalid token' });
+    } finally {
+      setConfiguringTelegram(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -203,26 +236,70 @@ export function SchoolSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Live Format Preview</CardTitle>
-            <CardDescription>Preview of the next auto-generated identifier</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-medium text-slate-500">Next Admission Number</p>
-              <p className="mt-1 font-mono text-lg font-bold text-[#1E3A8A] tabular-nums">
-                {livePreview}
-              </p>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-medium text-slate-500">Application Reference Pattern</p>
-              <p className="mt-1 font-mono text-sm font-semibold text-[#0F172A] tabular-nums">
-                {(applicationRefPrefix || 'APP').toUpperCase()}-{new Date().getUTCFullYear()}-0001
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Live Format Preview</CardTitle>
+              <CardDescription>Preview of the next auto-generated identifier</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-medium text-slate-500">Next Admission Number</p>
+                <p className="mt-1 font-mono text-lg font-bold text-[#1E3A8A] tabular-nums">
+                  {livePreview}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-medium text-slate-500">Application Reference Pattern</p>
+                <p className="mt-1 font-mono text-sm font-semibold text-[#0F172A] tabular-nums">
+                  {(applicationRefPrefix || 'APP').toUpperCase()}-{new Date().getUTCFullYear()}-0001
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>🤖 Telegram Bot Integration</CardTitle>
+              <CardDescription>
+                Connect your Telegram Bot token to enable full portal management via chat.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleConfigureTelegram} className="space-y-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
+                  <p className="font-semibold text-slate-700">Status:</p>
+                  <p>
+                    {telegramStatus?.bot_configured ? (
+                      <span className="text-emerald-600 font-medium">✓ Connected (Bot: @{telegramStatus.bot_username})</span>
+                    ) : (
+                      <span className="text-amber-600 font-medium">⚠️ Not Configured</span>
+                    )}
+                  </p>
+                  <p className="text-slate-500">Linked Accounts: {telegramStatus?.linked_accounts_count || 0}</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="telegram-token-input">Telegram Bot Token</Label>
+                  <Input
+                    id="telegram-token-input"
+                    type="password"
+                    placeholder="e.g. 9211896050:AAG8gS..."
+                    value={telegramToken}
+                    onChange={(e) => setTelegramToken(e.target.value)}
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Get your bot token from <span className="font-mono text-slate-700">@BotFather</span> on Telegram.
+                  </p>
+                </div>
+
+                <Button type="submit" disabled={configuringTelegram || !telegramToken.trim()} className="w-full">
+                  {configuringTelegram ? 'Connecting & Setting Webhook...' : 'Connect Bot & Set Webhook'}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

@@ -1,8 +1,26 @@
 import { getDb } from '../db/client.ts';
 import crypto from 'node:crypto';
 
+function getBotToken(): string | null {
+  if (process.env.TELEGRAM_BOT_TOKEN) return process.env.TELEGRAM_BOT_TOKEN;
+  try {
+    const db = getDb();
+    const row = db.prepare(`SELECT value_json FROM platform_settings WHERE key = 'telegram_bot_token'`).get() as any;
+    if (row?.value_json) {
+      try {
+        return JSON.parse(row.value_json) || row.value_json;
+      } catch {
+        return row.value_json;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 export async function sendTelegramMessage(chatId: string | number, text: string, parseMode = 'Markdown'): Promise<boolean> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = getBotToken();
   if (!token) {
     console.log(`[TelegramBot] Mock send to chat ${chatId}: ${text}`);
     return true;
