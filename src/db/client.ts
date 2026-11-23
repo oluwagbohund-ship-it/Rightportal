@@ -242,10 +242,21 @@ const ROLE_PERMISSION_MAP: Record<string, string[]> = {
 };
 
 export function getDbFilePath(): string {
-  return path.resolve(
-    process.cwd(),
-    process.env.SQLITE_DB_PATH || './data/dt_edtech.sqlite',
-  );
+  const envPath = process.env.SQLITE_DB_PATH;
+  if (envPath) {
+    const candidate = path.isAbsolute(envPath) ? envPath : path.resolve(process.cwd(), envPath);
+    try {
+      const dir = path.dirname(candidate);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.accessSync(dir, fs.constants.W_OK);
+      return candidate;
+    } catch (err) {
+      console.warn(`[DB] Warning: SQLITE_DB_PATH (${envPath}) is not writable. Falling back to local ./data/dt_edtech.sqlite`);
+    }
+  }
+  return path.resolve(process.cwd(), './data/dt_edtech.sqlite');
 }
 
 function sha256Text(content: string): string {
