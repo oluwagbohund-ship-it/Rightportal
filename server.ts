@@ -9,6 +9,7 @@ import { authRouter } from './src/server/routes/auth.ts';
 import { ownerRouter } from './src/server/routes/owner.ts';
 import { publicRouter } from './src/server/routes/public.ts';
 import { schoolRouter } from './src/server/routes/school.ts';
+import telegramRouter from './src/server/routes/telegram.ts';
 
 async function startServer() {
   // Initialize SQLite schema, migration checksums, PRAGMAs, and RBAC catalog
@@ -50,6 +51,8 @@ async function startServer() {
   app.use('/api/auth', authRouter);
   app.use('/api/owner', ownerRouter);
   app.use('/api/school', schoolRouter);
+  app.use('/api/telegram', telegramRouter);
+  app.use('/auth', telegramRouter);
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'API route not found.' });
