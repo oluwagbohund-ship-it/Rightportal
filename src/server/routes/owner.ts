@@ -1539,38 +1539,18 @@ ownerRouter.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { botToken, webhookUrl } = req.body as { botToken?: string; webhookUrl?: string };
-      if (!botToken || typeof botToken !== 'string' || !botToken.includes(':')) {
+      const existingToken = getBotToken();
+      const rawToken = typeof botToken === 'string' && botToken.trim() ? botToken.trim() : existingToken || '';
+
+      if (!rawToken || !rawToken.includes(':')) {
         res.status(400).json({ error: 'Valid Telegram bot token required (e.g. 123456:ABC-DEF...).' });
         return;
       }
-      const cleanToken = botToken.trim();
 
-      const meRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
+      const meRes = await fetch(`https://api.telegram.org/bot${rawToken}/getMe`);
       const meData = (await meRes.json()) as any;
       if (!meData.ok) {
         res.status(400).json({ error: `Telegram validation failed: ${meData.description || 'Invalid token'}` });
-        return;
-      }
-
-      const protocol = req.headers['x-forwarded-proto'] || 'https';
-      const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
-      const configuredAppUrl = process.env.APP_URL?.trim();
-      const appUrl = (
-        configuredAppUrl && configuredAppUrl !== 'MY_APP_URL' && configuredAppUrl.startsWith('http')
-          ? configuredAppUrl
-          : `${protocol}://${host}`
-      ).replace(/\/$/, '');
-      const targetWebhookUrl =
-        webhookUrl && webhookUrl.trim().startsWith('http')
-          ? webhookUrl.trim()
-          : `${appUrl}/api/telegram/webhook`;
-
-      const hookRes = await fetch(
-        `https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&drop_pending_updates=true`,
-      );
-      const hookData = (await hookRes.json()) as any;
-      if (!hookData.ok) {
-        res.status(400).json({ error: `Telegram setWebhook failed: ${hookData.description || 'Unknown error'}` });
         return;
       }
 
@@ -1583,13 +1563,60 @@ ownerRouter.post(
           updated_by = excluded.updated_by,
           updated_at = datetime('now')
       `);
-      upsertSetting.run('telegram_bot_token', JSON.stringify(cleanToken), req.auth!.email);
+      upsertSetting.run('telegram_bot_token', JSON.stringify(rawToken), req.auth!.email);
       if (meData.result?.username) {
         upsertSetting.run(
           'telegram_bot_username',
           JSON.stringify(String(meData.result.username)),
           req.auth!.email,
         );
+      }
+
+      const protocol = req.headers['x-forwarded-proto'] || 'https';
+      const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
+      const configuredAppUrl = process.env.APP_URL?.trim();
+      const appUrl = (
+        configuredAppUrl && configuredAppUrl !== 'MY_APP_URL' && configuredAppUrl.startsWith('http')
+          ? configuredAppUrl
+          : `${protocol}://${host}`
+      ).replace(/\/$/, '');
+      const candidateWebhook =
+        webhookUrl && webhookUrl.trim().startsWith('http')
+          ? webhookUrl.trim()
+          : `${appUrl}/api/telegram/webhook`;
+
+      let parsedWebhookUrl: URL;
+      try {
+        parsedWebhookUrl = new URL(candidateWebhook);
+        if (!['https:', 'http:'].includes(parsedWebhookUrl.protocol)) {
+          throw new Error('Invalid webhook protocol');
+        }
+      } catch {
+        res.status(400).json({ error: 'Invalid webhook URL format.' });
+        return;
+      }
+      const targetWebhookUrl = parsedWebhookUrl.toString();
+
+      let webhookRegistered = false;
+      let webhookWarning: string | null = null;
+      let retryAfterSeconds: number | null = null;
+
+      try {
+        const hookRes = await fetch(
+          `https://api.telegram.org/bot${rawToken}/setWebhook?url=${encodeURIComponent(targetWebhookUrl)}&drop_pending_updates=true`,
+        );
+        const hookData = (await hookRes.json()) as any;
+        if (hookData.ok) {
+          webhookRegistered = true;
+        } else {
+          retryAfterSeconds =
+            typeof hookData?.parameters?.retry_after === 'number'
+              ? hookData.parameters.retry_after
+              : null;
+          webhookWarning = hookData.description || 'Webhook registration failed.';
+        }
+      } catch (err) {
+        webhookWarning = err instanceof Error ? err.message : 'Unable to reach Telegram setWebhook endpoint.';
       }
 
       recordAuditLog({
@@ -1605,13 +1632,21 @@ ownerRouter.post(
           botUsername: meData.result?.username,
           botId: meData.result?.id,
           webhookUrl: targetWebhookUrl,
+          webhookRegistered,
+          webhookWarning,
         },
         ipAddress: getClientIp(req),
       });
 
+      const usernameLabel = meData.result?.username ? `@${meData.result.username}` : 'Bot';
       res.json({
         success: true,
-        message: `Telegram bot @${meData.result?.username} configured and webhook registered successfully!`,
+        webhookRegistered,
+        webhookWarning,
+        retryAfterSeconds,
+        message: webhookRegistered
+          ? `Telegram bot ${usernameLabel} configured and webhook registered successfully!`
+          : `Bot ${usernameLabel} credentials saved, but Telegram could not register the webhook yet (${webhookWarning}). Click "Re-Sync Webhook"${retryAfterSeconds ? ` after ${retryAfterSeconds}s` : ' once your HTTPS URL is ready'}.`,
         bot: meData.result,
         webhookUrl: targetWebhookUrl,
       });

@@ -43,6 +43,7 @@ import {
   getBotToken,
   resolveBotUsername,
   resolveUserAccountContext,
+  sendTelegramMessage,
 } from '../telegram-bot.ts';
 import type { RoleCode, UserType } from '../types.ts';
 import {
@@ -1070,3 +1071,98 @@ authRouter.post('/telegram-connect-token', requireCsrfCheck, requireAuth, async 
     expiresInMinutes: 15,
   });
 });
+
+authRouter.get('/telegram-status', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const db = getDb();
+  const botConfigured = Boolean(getBotToken());
+  const botUsername = botConfigured ? await resolveBotUsername() : null;
+
+  const links = db
+    .prepare(`
+      SELECT telegram_chat_id AS chatId, username, linked_at AS linkedAt
+      FROM telegram_links
+      WHERE user_id = ?
+      ORDER BY linked_at DESC
+    `)
+    .all(req.auth!.id) as Array<{
+    chatId: string;
+    username: string | null;
+    linkedAt: string;
+  }>;
+
+  res.json({
+    botConfigured,
+    botUsername,
+    botUrl: botUsername ? `https://t.me/${botUsername}` : null,
+    linked: links.length > 0,
+    links,
+  });
+});
+
+authRouter.delete('/telegram-link', requireCsrfCheck, requireAuth, async (req: AuthenticatedRequest, res) => {
+  const db = getDb();
+  const requestedChatId =
+    typeof req.query.chatId === 'string' && req.query.chatId.trim()
+      ? req.query.chatId.trim()
+      : typeof req.body?.chatId === 'string' && req.body.chatId.trim()
+        ? req.body.chatId.trim()
+        : null;
+
+  const matchingRows = requestedChatId
+    ? (db
+        .prepare('SELECT telegram_chat_id FROM telegram_links WHERE user_id = ? AND telegram_chat_id = ?')
+        .all(req.auth!.id, requestedChatId) as Array<{ telegram_chat_id: string }>)
+    : (db
+        .prepare('SELECT telegram_chat_id FROM telegram_links WHERE user_id = ?')
+        .all(req.auth!.id) as Array<{ telegram_chat_id: string }>);
+
+  if (matchingRows.length === 0) {
+    res.json({ ok: true, removedCount: 0 });
+    return;
+  }
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (requestedChatId) {
+      db.prepare('DELETE FROM telegram_links WHERE user_id = ? AND telegram_chat_id = ?').run(
+        req.auth!.id,
+        requestedChatId,
+      );
+    } else {
+      db.prepare('DELETE FROM telegram_links WHERE user_id = ?').run(req.auth!.id);
+    }
+    for (const row of matchingRows) {
+      db.prepare('DELETE FROM telegram_chat_states WHERE telegram_chat_id = ?').run(row.telegram_chat_id);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error('Self-service Telegram unlink failed:', err);
+    res.status(500).json({ error: 'Unable to disconnect Telegram account.' });
+    return;
+  }
+
+  for (const row of matchingRows) {
+    await sendTelegramMessage(
+      row.telegram_chat_id,
+      '🔌 Your Telegram chat was disconnected from your portal settings. Send `/link` anytime to reconnect.',
+    ).catch(() => {});
+  }
+
+  recordAuditLog({
+    actorUserId: req.auth!.id,
+    actorEmail: req.auth!.email,
+    actorRole: req.auth!.roleCode,
+    schoolId: req.auth!.activeSchoolId,
+    authEnvironment: req.auth!.authEnvironment,
+    action: 'auth.telegram.unlinked_by_user',
+    resourceType: 'telegram_links',
+    resourceId: matchingRows.map((r) => r.telegram_chat_id).join(','),
+    outcome: 'success',
+    metadata: { removedCount: matchingRows.length },
+    ipAddress: getClientIp(req),
+  });
+
+  res.json({ ok: true, removedCount: matchingRows.length });
+});
+

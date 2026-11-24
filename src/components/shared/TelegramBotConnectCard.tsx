@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Bot, CheckCircle2, Copy, ExternalLink, Send } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Bot, CheckCircle2, Copy, ExternalLink, Link2Off, Send } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { apiRequest } from '../../lib/api.ts';
 import { Alert } from '../ui/alert.tsx';
@@ -10,6 +10,20 @@ interface PublicBotInfo {
   enabled: boolean;
   botUsername: string | null;
   botUrl: string | null;
+}
+
+interface TelegramLinkSummary {
+  chatId: string;
+  username: string | null;
+  linkedAt: string;
+}
+
+interface UserTelegramStatus {
+  botConfigured: boolean;
+  botUsername: string | null;
+  botUrl: string | null;
+  linked: boolean;
+  links: TelegramLinkSummary[];
 }
 
 interface ConnectTokenResponse {
@@ -33,32 +47,45 @@ export function TelegramBotConnectCard({
 }: TelegramBotConnectCardProps) {
   const [loading, setLoading] = useState(true);
   const [botInfo, setBotInfo] = useState<PublicBotInfo | null>(null);
+  const [userStatus, setUserStatus] = useState<UserTelegramStatus | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [connectData, setConnectData] = useState<ConnectTokenResponse | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const loadStatus = useCallback(async () => {
+    try {
+      if (mode === 'login') {
+        const res = await fetch('/api/telegram/public-info');
+        const data = (await res.json()) as PublicBotInfo;
+        setBotInfo(data);
+      } else {
+        const data = await apiRequest<UserTelegramStatus>('/api/auth/telegram-status');
+        setUserStatus(data);
+        setBotInfo({
+          enabled: data.botConfigured,
+          botUsername: data.botUsername,
+          botUrl: data.botUrl,
+        });
+      }
+    } catch {
+      setBotInfo({ enabled: false, botUsername: null, botUrl: null });
+      setUserStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [mode]);
+
   useEffect(() => {
-    let active = true;
-    fetch('/api/telegram/public-info')
-      .then((res) => res.json() as Promise<PublicBotInfo>)
-      .then((data) => {
-        if (active) setBotInfo(data);
-      })
-      .catch(() => {
-        if (active) setBotInfo({ enabled: false, botUsername: null, botUrl: null });
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    void loadStatus();
+  }, [loadStatus]);
 
   const handleGenerateConnectLink = async () => {
     setGenerating(true);
     setError(null);
+    setStatusMessage(null);
     setCopied(false);
     try {
       const res = await apiRequest<ConnectTokenResponse>('/api/auth/telegram-connect-token', {
@@ -69,6 +96,24 @@ export function TelegramBotConnectCard({
       setError(err instanceof Error ? err.message : 'Unable to generate Telegram connection link.');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    setError(null);
+    setStatusMessage(null);
+    try {
+      await apiRequest<{ ok: boolean; removedCount: number }>('/api/auth/telegram-link', {
+        method: 'DELETE',
+      });
+      setConnectData(null);
+      setStatusMessage('Telegram account disconnected from this portal profile.');
+      await loadStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to disconnect Telegram account.');
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -166,32 +211,92 @@ export function TelegramBotConnectCard({
     return null;
   }
 
+  const isLinked = Boolean(userStatus?.linked && userStatus.links.length > 0);
+  const primaryLink = userStatus?.links?.[0] ?? null;
+
   return (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#EFF6FF] text-[#1E3A8A]">
+          <div
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+              isLinked ? 'bg-emerald-50 text-emerald-700' : 'bg-[#EFF6FF] text-[#1E3A8A]'
+            }`}
+          >
             <Bot className="h-5 w-5" aria-hidden="true" />
           </div>
-          <div>
-            <CardTitle className="text-base">
-              Universal Telegram Bot {botInfo.botUsername ? `(@${botInfo.botUsername})` : ''}
-            </CardTitle>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-base">
+                Universal Telegram Bot {botInfo.botUsername ? `(@${botInfo.botUsername})` : ''}
+              </CardTitle>
+              {isLinked ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
+                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                  <span>Connected</span>
+                </span>
+              ) : null}
+            </div>
             <CardDescription>
-              Link this portal account to Telegram for 1-click dashboard sign-in and instant role updates without typing passwords.
+              {isLinked && primaryLink ? (
+                <span>
+                  Linked to{' '}
+                  <strong className="text-slate-800">
+                    {primaryLink.username ? `@${primaryLink.username}` : `Chat ${primaryLink.chatId}`}
+                  </strong>{' '}
+                  (Chat ID <span className="font-mono">{primaryLink.chatId}</span>
+                  {userStatus && userStatus.links.length > 1
+                    ? ` · ${userStatus.links.length} chats active`
+                    : ''}
+                  ). Portal alerts and 1-click sign-in are active.
+                </span>
+              ) : (
+                'Link this portal account to Telegram for 1-click dashboard sign-in and instant role alerts without typing passwords.'
+              )}
             </CardDescription>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {isLinked && botInfo.botUrl ? (
+            <a
+              href={botInfo.botUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#2563EB] px-3 text-xs font-semibold text-white hover:bg-blue-600 transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Open Bot</span>
+            </a>
+          ) : null}
           <Button
             type="button"
             size="sm"
-            disabled={generating}
+            variant={isLinked ? 'outline' : 'default'}
+            disabled={generating || disconnecting}
             onClick={() => void handleGenerateConnectLink()}
           >
             <Send className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{generating ? 'Generating Link...' : 'Connect Telegram Account'}</span>
+            <span>
+              {generating
+                ? 'Generating Link...'
+                : isLinked
+                  ? 'Link Another Device'
+                  : 'Connect Telegram Account'}
+            </span>
           </Button>
+          {isLinked ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={disconnecting || generating}
+              onClick={() => void handleDisconnect()}
+              className="border-red-200 text-red-600 hover:bg-red-50"
+            >
+              <Link2Off className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{disconnecting ? 'Disconnecting...' : 'Disconnect'}</span>
+            </Button>
+          ) : null}
           {audience === 'owner' ? (
             <Link to="/dashboard/owner/telegram">
               <Button type="button" size="sm" variant="outline">
@@ -202,9 +307,10 @@ export function TelegramBotConnectCard({
         </div>
       </CardHeader>
 
-      {error || connectData ? (
+      {error || statusMessage || connectData ? (
         <CardContent className="space-y-3 border-t border-slate-100 pt-4">
           {error ? <Alert variant="error">{error}</Alert> : null}
+          {statusMessage ? <Alert variant="success">{statusMessage}</Alert> : null}
 
           {connectData ? (() => {
             const startParam = connectData.command.replace(/^\/start\s+/, '');

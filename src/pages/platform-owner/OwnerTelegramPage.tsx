@@ -138,21 +138,34 @@ export function OwnerTelegramPage() {
 
   const handleSaveAndConnect = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!botToken.trim()) {
+    if (!botToken.trim() && !status?.configured) {
       showToast({ variant: 'error', title: 'Token Required', description: 'Enter a valid bot token.' });
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      const res = await apiRequest<{ success: boolean; message: string }>('/api/owner/telegram/configure', {
+      const res = await apiRequest<{
+        success: boolean;
+        message: string;
+        webhookRegistered?: boolean;
+        webhookWarning?: string | null;
+      }>('/api/owner/telegram/configure', {
         method: 'POST',
         body: JSON.stringify({
-          botToken: botToken.trim(),
+          botToken: botToken.trim() || undefined,
           webhookUrl: webhookUrl.trim() || undefined,
         }),
       });
-      showToast({ variant: 'success', title: 'Connected Successfully', description: res.message });
+      if (res.webhookRegistered === false) {
+        showToast({
+          variant: 'info',
+          title: 'Bot Saved — Webhook Pending',
+          description: res.message,
+        });
+      } else {
+        showToast({ variant: 'success', title: 'Connected Successfully', description: res.message });
+      }
       setBotToken('');
       await fetchStatusAndLinks();
     } catch (err) {
@@ -251,35 +264,35 @@ export function OwnerTelegramPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <PageHeader
-          title="Platform Telegram Bot Management"
-          description="Configure the universal platform Telegram bot token, automate webhook registration, and monitor Students, Parents, Teachers, School Admins, and Platform Workforce chat sessions."
-        />
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void fetchStatusAndLinks(true)}
-            disabled={refreshing || loading}
-            className="gap-2"
-          >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh Status
-          </Button>
-          {status?.botInfo?.username ? (
-            <a
-              href={`https://t.me/${status.botInfo.username}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#2563EB] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-600 transition"
+      <PageHeader
+        title="Platform Telegram Bot Management"
+        description="Configure the universal platform Telegram bot token, automate webhook registration, and monitor Students, Parents, Teachers, School Admins, and Platform Workforce chat sessions."
+        actions={
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void fetchStatusAndLinks(true)}
+              disabled={refreshing || loading}
+              className="gap-2 whitespace-nowrap"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Open @{status.botInfo.username}
-            </a>
-          ) : null}
-        </div>
-      </div>
+              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh Status
+            </Button>
+            {status?.botInfo?.username ? (
+              <a
+                href={`https://t.me/${status.botInfo.username}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#2563EB] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-600 transition whitespace-nowrap"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Open @{status.botInfo.username}
+              </a>
+            ) : null}
+          </div>
+        }
+      />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
       {status?.apiError ? (

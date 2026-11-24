@@ -24,6 +24,9 @@ const { authRouter } = await import('./routes/auth.ts');
 const { ownerRouter } = await import('./routes/owner.ts');
 const telegramRouter = (await import('./routes/telegram.ts')).default;
 const { getBotToken, getBotUsername, handleTelegramUpdate } = await import('./telegram-bot.ts');
+const { createNotificationRecord } = await import('./notifications/service.ts');
+
+let simulateSetWebhook429 = false;
 
 interface SentTelegramCall {
   method: string;
@@ -121,7 +124,24 @@ before(async () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      if (method === 'setWebhook' || method === 'deleteWebhook' || method === 'answerCallbackQuery') {
+      if (method === 'setWebhook') {
+        if (simulateSetWebhook429) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error_code: 429,
+              description: 'Too Many Requests: retry after 32',
+              parameters: { retry_after: 32 },
+            }),
+            { status: 429, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (method === 'deleteWebhook' || method === 'answerCallbackQuery') {
         return new Response(JSON.stringify({ ok: true, result: true }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -481,3 +501,102 @@ test('All 5 user groups can link, view role actions, and sign in via 1-click /au
   assert.equal(linksRes.json.links.length, 5);
   assert.ok(linksRes.json.links.every((row: any) => Boolean(row.user_full_name) && Boolean(row.identifier)));
 });
+
+test('Portal notifications forward to matching linked Telegram users without cross-tenant leaks', async () => {
+  const db = getDb();
+  const otherSchoolId = `sch_other_${crypto.randomUUID()}`;
+  const otherUserId = `usr_other_${crypto.randomUUID()}`;
+  db.prepare(
+    `INSERT INTO schools (id, name, slug, code, country, city, contact_email, status) VALUES (?, 'Beta Academy', 'beta-academy', 'DT-BETA01', 'Nigeria', 'Abuja', 'admin@beta.test', 'active')`,
+  ).run(otherSchoolId);
+  db.prepare(
+    `INSERT INTO users (id, email, full_name, password_hash, user_type, is_active) VALUES (?, 'other@beta.test', 'Beta Admin', ?, 'school_member', 1)`,
+  ).run(otherUserId, hashPassword('PortalPass123!'));
+  db.prepare(
+    `INSERT INTO telegram_links (telegram_chat_id, user_id, school_id, profile_id, auth_environment, role, username) VALUES ('29999', ?, ?, NULL, 'school', 'school_admin', 'beta_admin')`,
+  ).run(otherUserId, otherSchoolId);
+
+  sentCalls.length = 0;
+  await createNotificationRecord({
+    schoolId: ids.schoolId,
+    scope: 'teacher',
+    targetRoleCode: 'teacher',
+    createdByUserId: ids.adminUser,
+    createdByName: 'Principal Ada',
+    title: 'Staff Meeting_Notice',
+    body: 'Submit term CA scores before Friday.',
+    severity: 'notice',
+  });
+
+  // Only Alpha Crest teacher (20003) should receive the teacher-scoped alert
+  assert.equal(sentCalls.filter((c) => c.chatId === '20003' && c.text.includes('Staff Meeting')).length, 1);
+  assert.equal(sentCalls.filter((c) => c.chatId === '20001').length, 0);
+  assert.equal(sentCalls.filter((c) => c.chatId === '29999').length, 0);
+
+  // Platform broadcast reaches everyone including Beta Academy
+  sentCalls.length = 0;
+  await createNotificationRecord({
+    schoolId: null,
+    scope: 'platform',
+    createdByUserId: ids.ownerUser,
+    createdByName: 'David Owner',
+    title: 'Scheduled Maintenance',
+    body: 'Brief maintenance window tonight.',
+    severity: 'urgent',
+  });
+  assert.ok(sentCalls.some((c) => c.chatId === '20001' && c.text.includes('Scheduled Maintenance')));
+  assert.ok(sentCalls.some((c) => c.chatId === '29999' && c.text.includes('Scheduled Maintenance')));
+});
+
+test('Users can inspect GET /api/auth/telegram-status and disconnect via DELETE /api/auth/telegram-link', async () => {
+  const stuLogin = await api('/api/auth/school/login', {
+    method: 'POST',
+    body: { email: 'student@alphacrest.test', password: 'PortalPass123!', schoolCode: 'DT-ALPH01' },
+  });
+  assert.equal(stuLogin.status, 200);
+  const stuCookie = stuLogin.cookie!;
+
+  const statusBefore = await api('/api/auth/telegram-status', { cookie: stuCookie });
+  assert.equal(statusBefore.status, 200);
+  assert.equal(statusBefore.json.linked, true);
+  assert.equal(statusBefore.json.links[0].chatId, '20001');
+  assert.equal(statusBefore.json.links[0].username, 'chidi_stu');
+
+  const delRes = await api('/api/auth/telegram-link', {
+    method: 'DELETE',
+    cookie: stuCookie,
+  });
+  assert.equal(delRes.status, 200);
+  assert.equal(delRes.json.ok, true);
+  assert.equal(delRes.json.removedCount, 1);
+
+  const statusAfter = await api('/api/auth/telegram-status', { cookie: stuCookie });
+  assert.equal(statusAfter.status, 200);
+  assert.equal(statusAfter.json.linked, false);
+  assert.equal(statusAfter.json.links.length, 0);
+});
+
+test('POST /api/owner/telegram/configure saves valid token even when Telegram setWebhook returns 429', async () => {
+  const login = await api('/api/auth/workers/login', {
+    method: 'POST',
+    body: { email: 'owner@davetimi.test', password: 'PortalPass123!' },
+  });
+  const ownerCookie = login.cookie!;
+
+  try {
+    simulateSetWebhook429 = true;
+    const cfg = await api('/api/owner/telegram/configure', {
+      method: 'POST',
+      cookie: ownerCookie,
+      body: { botToken: '998877:RATE_LIMITED_TOKEN_SAVE' },
+    });
+    assert.equal(cfg.status, 200);
+    assert.equal(cfg.json.success, true);
+    assert.equal(cfg.json.webhookRegistered, false);
+    assert.equal(cfg.json.retryAfterSeconds, 32);
+    assert.equal(getBotToken(), '998877:RATE_LIMITED_TOKEN_SAVE');
+  } finally {
+    simulateSetWebhook429 = false;
+  }
+});
+

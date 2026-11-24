@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { getDb } from '../../db/client.ts';
+import { dispatchTelegramNotification } from '../telegram-bot.ts';
 import type { RoleCode } from '../types.ts';
 import { dispatchFcmNotification, getFcmIntegrationStatus } from './fcm-adapter.ts';
 
@@ -61,6 +62,20 @@ export async function createNotificationRecord(params: {
     params.severity,
     fcmResult.status,
   );
+
+  // Forward alert to linked Telegram recipients in scope (never block DB notification creation on external delivery errors)
+  await dispatchTelegramNotification({
+    schoolId: params.schoolId,
+    scope: params.scope,
+    targetRoleCode: params.targetRoleCode ?? null,
+    targetUserId: params.targetUserId ?? null,
+    title: params.title,
+    body: params.body,
+    severity: params.severity,
+    createdByName: params.createdByName,
+  }).catch((err) => {
+    console.error('[Notifications] Telegram dispatch error:', err);
+  });
 
   const created = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as Omit<
     NotificationItem,

@@ -233,6 +233,99 @@ async function answerCallbackQuery(callbackQueryId: string, text?: string): Prom
   }
 }
 
+function escapeTelegramMarkdown(value: string): string {
+  return value.replace(/([_*`\[])/g, '\\$1');
+}
+
+export async function dispatchTelegramNotification(params: {
+  schoolId: string | null;
+  scope: 'platform' | 'school' | 'teacher' | 'student' | 'parent' | 'direct';
+  targetRoleCode?: string | null;
+  targetUserId?: string | null;
+  title: string;
+  body: string;
+  severity: 'info' | 'notice' | 'urgent';
+  createdByName: string;
+}): Promise<{ dispatched: number }> {
+  if (!getBotToken()) {
+    return { dispatched: 0 };
+  }
+
+  const db = getDb();
+  let chatRows: Array<{ telegram_chat_id: string }> = [];
+
+  try {
+    if (params.scope === 'platform') {
+      chatRows = db.prepare('SELECT DISTINCT telegram_chat_id FROM telegram_links').all() as Array<{
+        telegram_chat_id: string;
+      }>;
+    } else if (params.scope === 'direct' && params.targetUserId) {
+      if (params.schoolId) {
+        chatRows = db
+          .prepare(
+            'SELECT DISTINCT telegram_chat_id FROM telegram_links WHERE user_id = ? AND school_id = ?',
+          )
+          .all(params.targetUserId, params.schoolId) as Array<{ telegram_chat_id: string }>;
+      } else {
+        chatRows = db
+          .prepare('SELECT DISTINCT telegram_chat_id FROM telegram_links WHERE user_id = ?')
+          .all(params.targetUserId) as Array<{ telegram_chat_id: string }>;
+      }
+    } else if (params.scope === 'school' && params.schoolId) {
+      chatRows = db
+        .prepare('SELECT DISTINCT telegram_chat_id FROM telegram_links WHERE school_id = ?')
+        .all(params.schoolId) as Array<{ telegram_chat_id: string }>;
+    } else if (
+      (params.scope === 'teacher' || params.scope === 'student' || params.scope === 'parent') &&
+      params.schoolId
+    ) {
+      if (params.targetUserId) {
+        chatRows = db
+          .prepare(
+            'SELECT DISTINCT telegram_chat_id FROM telegram_links WHERE school_id = ? AND user_id = ?',
+          )
+          .all(params.schoolId, params.targetUserId) as Array<{ telegram_chat_id: string }>;
+      } else {
+        const roleFilter = params.targetRoleCode || params.scope;
+        chatRows = db
+          .prepare(
+            'SELECT DISTINCT telegram_chat_id FROM telegram_links WHERE school_id = ? AND role = ?',
+          )
+          .all(params.schoolId, roleFilter) as Array<{ telegram_chat_id: string }>;
+      }
+    }
+  } catch (err) {
+    console.error('[TelegramBot] Notification recipient lookup failed:', err);
+    return { dispatched: 0 };
+  }
+
+  if (chatRows.length === 0) {
+    return { dispatched: 0 };
+  }
+
+  const icon = params.severity === 'urgent' ? '🚨' : params.severity === 'notice' ? '📢' : '🔔';
+  const severityLabel = params.severity.toUpperCase();
+  const safeTitle = escapeTelegramMarkdown(params.title.trim());
+  const safeBody = escapeTelegramMarkdown(params.body.trim());
+  const safeSender = escapeTelegramMarkdown(params.createdByName.trim() || 'Portal Administration');
+  const message =
+    `${icon} *${severityLabel}: ${safeTitle}*\n\n` +
+    `${safeBody}\n\n` +
+    `_From: ${safeSender}_`;
+
+  let dispatched = 0;
+  // Cap concurrent outbound dispatches in small batches to stay well within Telegram rate limits
+  for (let i = 0; i < chatRows.length; i += 10) {
+    const batch = chatRows.slice(i, i + 10);
+    const results = await Promise.all(
+      batch.map((row) => sendTelegramMessage(row.telegram_chat_id, message).catch(() => false)),
+    );
+    dispatched += results.filter(Boolean).length;
+  }
+
+  return { dispatched };
+}
+
 export function createTelegramToken(params: {
   purpose: 'magic_login' | 'connect_link';
   userId: string;
