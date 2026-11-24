@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../../components/dashboard/PageHeader.tsx';
+import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
@@ -224,6 +225,8 @@ export function ParentOverviewPage() {
           )}
         </CardContent>
       </Card>
+
+      <TelegramBotConnectCard mode="portal" audience="school" />
     </div>
   );
 }

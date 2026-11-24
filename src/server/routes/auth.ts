@@ -38,6 +38,12 @@ import {
   extractIdCardTokenFromScan,
   ID_CARD_TOKEN_PREFIX,
 } from '../id-card-helpers.ts';
+import {
+  createTelegramToken,
+  getBotToken,
+  resolveBotUsername,
+  resolveUserAccountContext,
+} from '../telegram-bot.ts';
 import type { RoleCode, UserType } from '../types.ts';
 import {
   bootstrapOwnerSchema,
@@ -1020,5 +1026,47 @@ authRouter.post('/password-reset/confirm', requireCsrfCheck, (req, res) => {
     ok: true,
     environment: row.auth_environment,
     redirectPath: row.auth_environment === 'workers' ? '/login/workers' : '/login/school',
+  });
+});
+
+authRouter.post('/telegram-connect-token', requireCsrfCheck, requireAuth, async (req: AuthenticatedRequest, res) => {
+  const ctx = resolveUserAccountContext(req.auth!.id);
+  if (!ctx) {
+    res.status(403).json({ error: 'Account is inactive or has no active portal context.' });
+    return;
+  }
+
+  const rawToken = createTelegramToken({
+    purpose: 'connect_link',
+    userId: ctx.userId,
+    schoolId: ctx.schoolId,
+    profileId: ctx.profileId,
+    authEnvironment: ctx.authEnvironment,
+    role: ctx.role,
+    ttlMinutes: 15,
+  });
+
+  const botConfigured = Boolean(getBotToken());
+  const botUsername = botConfigured ? await resolveBotUsername() : null;
+  const startParam = `link_${rawToken}`;
+
+  recordAuditLog({
+    actorUserId: ctx.userId,
+    actorEmail: ctx.email,
+    actorRole: ctx.role,
+    schoolId: ctx.schoolId,
+    authEnvironment: ctx.authEnvironment,
+    action: 'auth.telegram.connect_token_issued',
+    resourceType: 'telegram_login_token',
+    outcome: 'success',
+    ipAddress: getClientIp(req),
+  });
+
+  res.status(201).json({
+    botConfigured,
+    botUsername,
+    command: `/start ${startParam}`,
+    deepLinkUrl: botUsername ? `https://t.me/${botUsername}?start=${encodeURIComponent(startParam)}` : null,
+    expiresInMinutes: 15,
   });
 });

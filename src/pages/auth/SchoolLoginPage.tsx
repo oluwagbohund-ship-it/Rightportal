@@ -3,6 +3,7 @@ import { Building2, KeyRound, QrCode } from 'lucide-react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Logo } from '../../components/brand/Logo.tsx';
 import { QrCameraScanner } from '../../components/shared/QrCameraScanner.tsx';
+import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
@@ -223,6 +224,10 @@ export function SchoolLoginPage() {
             </div>
           </CardContent>
         </Card>
+
+        <div className="mt-4">
+          <TelegramBotConnectCard mode="login" audience="school" />
+        </div>
       </div>
 
       <div className="mx-auto w-full max-w-md text-center text-xs text-slate-500">

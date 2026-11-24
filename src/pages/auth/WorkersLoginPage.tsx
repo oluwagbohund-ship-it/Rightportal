@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Shield } from 'lucide-react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Logo } from '../../components/brand/Logo.tsx';
+import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
@@ -243,6 +244,10 @@ export function WorkersLoginPage() {
             </>
           )}
         </Card>
+
+        <div className="mt-4">
+          <TelegramBotConnectCard mode="login" audience="workers" darkSurface />
+        </div>
       </div>
 
       <div className="mx-auto w-full max-w-md text-center text-xs text-slate-500">

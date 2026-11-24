@@ -1452,13 +1452,25 @@ ownerRouter.get('/telegram/status', requirePermission('platform.settings.manage'
 
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
-    const appUrl = (process.env.APP_URL || `${protocol}://${host}`).replace(/\/$/, '');
+    const configuredAppUrl = process.env.APP_URL?.trim();
+    const appUrl = (
+      configuredAppUrl && configuredAppUrl !== 'MY_APP_URL' && configuredAppUrl.startsWith('http')
+        ? configuredAppUrl
+        : `${protocol}://${host}`
+    ).replace(/\/$/, '');
     const suggestedWebhookUrl = `${appUrl}/api/telegram/webhook`;
 
     const totalRow = db.prepare('SELECT COUNT(*) as cnt FROM telegram_links').get() as { cnt: number };
     const studentsRow = db.prepare("SELECT COUNT(*) as cnt FROM telegram_links WHERE role = 'student'").get() as { cnt: number };
+    const parentsRow = db.prepare("SELECT COUNT(*) as cnt FROM telegram_links WHERE role = 'parent'").get() as { cnt: number };
     const teachersRow = db.prepare("SELECT COUNT(*) as cnt FROM telegram_links WHERE role = 'teacher'").get() as { cnt: number };
-    const schoolsRow = db.prepare('SELECT COUNT(DISTINCT school_id) as cnt FROM telegram_links').get() as { cnt: number };
+    const adminsRow = db.prepare("SELECT COUNT(*) as cnt FROM telegram_links WHERE role = 'school_admin'").get() as { cnt: number };
+    const workforceRow = db
+      .prepare("SELECT COUNT(*) as cnt FROM telegram_links WHERE role IN ('platform_owner', 'workforce_admin', 'workforce_support')")
+      .get() as { cnt: number };
+    const schoolsRow = db
+      .prepare('SELECT COUNT(DISTINCT school_id) as cnt FROM telegram_links WHERE school_id IS NOT NULL')
+      .get() as { cnt: number };
 
     let botInfo: any = null;
     let webhookInfo: any = null;
@@ -1477,6 +1489,15 @@ ownerRouter.get('/telegram/status', requirePermission('platform.settings.manage'
 
         if (meData.ok) {
           botInfo = meData.result;
+          if (meData.result?.username) {
+            db.prepare(`
+              INSERT INTO platform_settings (key, value_json, updated_by, updated_at)
+              VALUES ('telegram_bot_username', ?, 'system', datetime('now'))
+              ON CONFLICT(key) DO UPDATE SET
+                value_json = excluded.value_json,
+                updated_at = datetime('now')
+            `).run(JSON.stringify(String(meData.result.username)));
+          }
         } else {
           apiError = meData.description || 'Failed to authenticate with Telegram';
         }
@@ -1498,7 +1519,10 @@ ownerRouter.get('/telegram/status', requirePermission('platform.settings.manage'
       stats: {
         totalLinks: totalRow.cnt || 0,
         studentLinks: studentsRow.cnt || 0,
+        parentLinks: parentsRow.cnt || 0,
         teacherLinks: teachersRow.cnt || 0,
+        adminLinks: adminsRow.cnt || 0,
+        workforceLinks: workforceRow.cnt || 0,
         schoolsRepresented: schoolsRow.cnt || 0,
       },
     });
@@ -1530,7 +1554,12 @@ ownerRouter.post(
 
       const protocol = req.headers['x-forwarded-proto'] || 'https';
       const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
-      const appUrl = (process.env.APP_URL || `${protocol}://${host}`).replace(/\/$/, '');
+      const configuredAppUrl = process.env.APP_URL?.trim();
+      const appUrl = (
+        configuredAppUrl && configuredAppUrl !== 'MY_APP_URL' && configuredAppUrl.startsWith('http')
+          ? configuredAppUrl
+          : `${protocol}://${host}`
+      ).replace(/\/$/, '');
       const targetWebhookUrl =
         webhookUrl && webhookUrl.trim().startsWith('http')
           ? webhookUrl.trim()
@@ -1546,14 +1575,22 @@ ownerRouter.post(
       }
 
       const db = getDb();
-      db.prepare(`
+      const upsertSetting = db.prepare(`
         INSERT INTO platform_settings (key, value_json, updated_by, updated_at)
-        VALUES ('telegram_bot_token', ?, ?, datetime('now'))
+        VALUES (?, ?, ?, datetime('now'))
         ON CONFLICT(key) DO UPDATE SET
           value_json = excluded.value_json,
           updated_by = excluded.updated_by,
           updated_at = datetime('now')
-      `).run(JSON.stringify(cleanToken), req.auth!.email);
+      `);
+      upsertSetting.run('telegram_bot_token', JSON.stringify(cleanToken), req.auth!.email);
+      if (meData.result?.username) {
+        upsertSetting.run(
+          'telegram_bot_username',
+          JSON.stringify(String(meData.result.username)),
+          req.auth!.email,
+        );
+      }
 
       recordAuditLog({
         actorUserId: req.auth!.id,
@@ -1624,7 +1661,12 @@ ownerRouter.post(
       if (action === 'set') {
         const protocol = req.headers['x-forwarded-proto'] || 'https';
         const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000';
-        const appUrl = (process.env.APP_URL || `${protocol}://${host}`).replace(/\/$/, '');
+        const configuredAppUrl = process.env.APP_URL?.trim();
+        const appUrl = (
+          configuredAppUrl && configuredAppUrl !== 'MY_APP_URL' && configuredAppUrl.startsWith('http')
+            ? configuredAppUrl
+            : `${protocol}://${host}`
+        ).replace(/\/$/, '');
         const targetWebhookUrl =
           webhookUrl && webhookUrl.trim().startsWith('http')
             ? webhookUrl.trim()
@@ -1678,7 +1720,9 @@ ownerRouter.post(
         }
       }
       const db = getDb();
-      db.prepare(`DELETE FROM platform_settings WHERE key = 'telegram_bot_token'`).run();
+      db.prepare(
+        `DELETE FROM platform_settings WHERE key IN ('telegram_bot_token', 'telegram_bot_username')`,
+      ).run();
 
       recordAuditLog({
         actorUserId: req.auth!.id,
@@ -1708,28 +1752,25 @@ ownerRouter.get('/telegram/links', requirePermission('platform.settings.manage')
         tl.telegram_chat_id,
         tl.user_id,
         tl.school_id,
+        tl.profile_id,
+        tl.auth_environment,
         tl.role,
-        tl.username as telegram_username,
+        tl.username AS telegram_username,
         tl.linked_at,
-        sc.name as school_name,
-        sc.code as school_code,
-        CASE
-          WHEN tl.role = 'student' THEN (SELECT first_name || ' ' || last_name FROM students WHERE id = tl.user_id)
-          WHEN tl.role = 'teacher' THEN (SELECT first_name || ' ' || last_name FROM teachers WHERE id = tl.user_id)
-          ELSE 'User'
-        END as user_full_name,
-        CASE
-          WHEN tl.role = 'student' THEN (SELECT admission_number FROM students WHERE id = tl.user_id)
-          WHEN tl.role = 'teacher' THEN (SELECT staff_id_number FROM teachers WHERE id = tl.user_id)
-          ELSE tl.user_id
-        END as identifier,
-        CASE
-          WHEN tl.role = 'student' THEN (SELECT student_email FROM students WHERE id = tl.user_id)
-          WHEN tl.role = 'teacher' THEN (SELECT email FROM teachers WHERE id = tl.user_id)
-          ELSE NULL
-        END as email
+        sc.name AS school_name,
+        sc.code AS school_code,
+        u.full_name AS user_full_name,
+        u.email AS email,
+        COALESCE(
+          stu.admission_number,
+          tch.staff_id_number,
+          u.email
+        ) AS identifier
       FROM telegram_links tl
+      INNER JOIN users u ON u.id = tl.user_id
       LEFT JOIN schools sc ON tl.school_id = sc.id
+      LEFT JOIN students stu ON stu.id = tl.profile_id AND tl.role = 'student'
+      LEFT JOIN teachers tch ON tch.id = tl.profile_id AND tl.role = 'teacher'
       ORDER BY tl.linked_at DESC
     `).all() as any[];
 
@@ -1758,7 +1799,7 @@ ownerRouter.delete(
 
       await sendTelegramMessage(
         chatId,
-        'ℹ️ *Notice*: Your Telegram account has been unlinked from the school portal by the platform administrator. To reconnect, use `/link <your_code>`.',
+        'ℹ️ *Notice*: Your Telegram account has been unlinked from the portal by platform administration. To reconnect, use `/link` or generate a 1-click link in your dashboard.',
       ).catch(() => {});
 
       recordAuditLog({

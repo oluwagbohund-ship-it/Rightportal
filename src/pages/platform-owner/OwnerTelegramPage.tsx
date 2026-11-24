@@ -58,7 +58,10 @@ interface TelegramStatusResponse {
   stats: {
     totalLinks: number;
     studentLinks: number;
+    parentLinks?: number;
     teacherLinks: number;
+    adminLinks?: number;
+    workforceLinks?: number;
     schoolsRepresented: number;
   };
 }
@@ -66,7 +69,7 @@ interface TelegramStatusResponse {
 interface TelegramLinkItem {
   telegram_chat_id: string;
   user_id: string;
-  school_id: string;
+  school_id: string | null;
   role: string;
   telegram_username: string | null;
   linked_at: string;
@@ -228,7 +231,11 @@ export function OwnerTelegramPage() {
 
   const filteredLinks = useMemo(() => {
     return links.filter((item) => {
-      const matchRole = roleFilter === 'all' || item.role === roleFilter;
+      const matchRole =
+        roleFilter === 'all' ||
+        (roleFilter === 'workforce'
+          ? ['platform_owner', 'workforce_admin', 'workforce_support'].includes(item.role)
+          : item.role === roleFilter);
       if (!matchRole) return false;
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
@@ -247,7 +254,7 @@ export function OwnerTelegramPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <PageHeader
           title="Platform Telegram Bot Management"
-          description="Configure the platform Telegram bot token, automate webhook registration, and monitor student and staff chat sessions across all schools."
+          description="Configure the universal platform Telegram bot token, automate webhook registration, and monitor Students, Parents, Teachers, School Admins, and Platform Workforce chat sessions."
         />
         <div className="flex items-center gap-2">
           <Button
@@ -349,7 +356,9 @@ export function OwnerTelegramPage() {
           </CardHeader>
           <CardContent>
             <p className="text-xs text-slate-600">
-              {status?.stats?.studentLinks ?? 0} Students • {status?.stats?.teacherLinks ?? 0} Staff
+              {status?.stats?.studentLinks ?? 0} Students • {status?.stats?.parentLinks ?? 0} Parents •{' '}
+              {status?.stats?.teacherLinks ?? 0} Teachers •{' '}
+              {(status?.stats?.adminLinks ?? 0) + (status?.stats?.workforceLinks ?? 0)} Admins/Ops
             </p>
           </CardContent>
         </Card>
@@ -399,7 +408,7 @@ export function OwnerTelegramPage() {
                     placeholder={
                       status?.configured
                         ? 'Enter new token to replace existing'
-                        : 'e.g. 9211896050:AAG8gS2A8y3ijWfBR4HDkiID5UCwKRdlEc4'
+                        : 'e.g. 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz'
                     }
                     value={botToken}
                     onChange={(e) => setBotToken(e.target.value)}
@@ -580,7 +589,7 @@ export function OwnerTelegramPage() {
                 Active Linked Telegram Accounts ({filteredLinks.length})
               </CardTitle>
               <CardDescription>
-                Auditable list of students and staff who have connected their Telegram chat to their school portal profile.
+                Auditable directory of Students, Parents, Teachers, School Admins, and Platform Staff connected to the universal bot.
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -593,7 +602,7 @@ export function OwnerTelegramPage() {
                   className="pl-8 text-xs"
                 />
               </div>
-              <div className="w-32">
+              <div className="w-40">
                 <Select
                   value={roleFilter}
                   onChange={(e) => setRoleFilter(e.target.value)}
@@ -601,7 +610,10 @@ export function OwnerTelegramPage() {
                 >
                   <option value="all">All Roles</option>
                   <option value="student">Students</option>
+                  <option value="parent">Parents</option>
                   <option value="teacher">Teachers</option>
+                  <option value="school_admin">School Admins</option>
+                  <option value="workforce">Platform Workforce</option>
                 </Select>
               </div>
             </div>
@@ -617,7 +629,7 @@ export function OwnerTelegramPage() {
               <p className="mt-1 text-xs text-slate-500">
                 {searchQuery || roleFilter !== 'all'
                   ? 'Try clearing your search query or role filter.'
-                  : 'Students and teachers link their accounts by chatting with the bot and typing /link <AccessCodeOrEmail>.'}
+                  : 'Users link via the Connect Telegram button on their portal or by sending /link in Telegram.'}
               </p>
             </div>
           ) : (
@@ -627,7 +639,7 @@ export function OwnerTelegramPage() {
                   <tr>
                     <th className="py-2.5 px-3 font-semibold">User & Identifier</th>
                     <th className="py-2.5 px-3 font-semibold">Role</th>
-                    <th className="py-2.5 px-3 font-semibold">School Tenant</th>
+                    <th className="py-2.5 px-3 font-semibold">Tenant / Scope</th>
                     <th className="py-2.5 px-3 font-semibold">Telegram Identity</th>
                     <th className="py-2.5 px-3 font-semibold">Linked At</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Actions</th>
@@ -645,14 +657,20 @@ export function OwnerTelegramPage() {
                           className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${
                             item.role === 'student'
                               ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : 'bg-purple-50 text-purple-700 border border-purple-200'
+                              : item.role === 'parent'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : item.role === 'teacher'
+                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : item.role === 'school_admin'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-slate-900 text-white border border-slate-900'
                           }`}
                         >
-                          {item.role}
+                          {item.role.replace(/_/g, ' ')}
                         </span>
                       </td>
                       <td className="py-3 px-3">
-                        <p className="font-medium text-slate-800">{item.school_name || 'Primary School'}</p>
+                        <p className="font-medium text-slate-800">{item.school_name || 'Platform Operations'}</p>
                         {item.school_code ? (
                           <span className="font-mono text-[11px] text-slate-500">[{item.school_code}]</span>
                         ) : null}
@@ -690,45 +708,45 @@ export function OwnerTelegramPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <Terminal className="h-5 w-5 text-slate-700" />
-            <CardTitle>Supported Bot Commands Reference</CardTitle>
+            <CardTitle>Universal Bot Commands Reference</CardTitle>
           </div>
           <CardDescription>
-            Reference manual of all interactive commands implemented in the portal bot for students, teachers, and parents.
+            Role-aware interactive buttons and slash commands supported across Students, Parents, Teachers, School Admins, and Platform Staff.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-xs">
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-              <p className="font-mono font-bold text-[#1E3A8A]">/start , /help</p>
-              <p className="mt-1 text-slate-600">Greets the user and lists all available portal commands.</p>
+              <p className="font-mono font-bold text-[#1E3A8A]">/start , /menu</p>
+              <p className="mt-1 text-slate-600">Opens the interactive role-specific button menu or guided login.</p>
             </div>
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-              <p className="font-mono font-bold text-[#1E3A8A]">/link &lt;code/email&gt;</p>
-              <p className="mt-1 text-slate-600">Securely links a Telegram chat to a student or teacher profile.</p>
+              <p className="font-mono font-bold text-[#1E3A8A]">/link &lt;email/ID&gt;</p>
+              <p className="mt-1 text-slate-600">Verifies credentials to connect any Student, Parent, Teacher, Admin, or Owner.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <p className="font-mono font-bold text-[#1E3A8A]">/idlogin , /idcard</p>
+              <p className="mt-1 text-slate-600">Student Digital ID sign-in & live QR PNG card retrieval.</p>
             </div>
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
               <p className="font-mono font-bold text-[#1E3A8A]">/login</p>
-              <p className="mt-1 text-slate-600">Generates an instant 1-click passwordless sign-in link.</p>
+              <p className="mt-1 text-slate-600">Generates a 1-click single-use sign-in link straight to the user dashboard.</p>
             </div>
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-              <p className="font-mono font-bold text-[#1E3A8A]">/attendance</p>
-              <p className="mt-1 text-slate-600">Displays attendance stats and latest check-in records.</p>
+              <p className="font-mono font-bold text-[#1E3A8A]">/attendance , /results</p>
+              <p className="mt-1 text-slate-600">Students & Parents inspect attendance logs and published grades.</p>
             </div>
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-              <p className="font-mono font-bold text-[#1E3A8A]">/results</p>
-              <p className="mt-1 text-slate-600">Fetches latest published continuous assessment and exam scores.</p>
+              <p className="font-mono font-bold text-[#1E3A8A]">/fees , /wards</p>
+              <p className="mt-1 text-slate-600">Balances & receipts for Students/Parents; linked wards list.</p>
             </div>
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-              <p className="font-mono font-bold text-[#1E3A8A]">/fees</p>
-              <p className="mt-1 text-slate-600">Shows outstanding school bills and payment receipts.</p>
+              <p className="font-mono font-bold text-[#1E3A8A]">/classes , /checkin</p>
+              <p className="mt-1 text-slate-600">Teachers inspect assigned classes or scan/paste ID tokens to mark Present.</p>
             </div>
             <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-              <p className="font-mono font-bold text-[#1E3A8A]">/idcard</p>
-              <p className="mt-1 text-slate-600">Displays Digital ID Card serial number and verification token.</p>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-              <p className="font-mono font-bold text-[#1E3A8A]">/status , /unlink</p>
-              <p className="mt-1 text-slate-600">Checks active link status or disconnects the Telegram chat.</p>
+              <p className="font-mono font-bold text-[#1E3A8A]">/overview , /admissions</p>
+              <p className="mt-1 text-slate-600">School Admins & Platform Owner monitor snapshots, finance, and schools.</p>
             </div>
           </div>
         </CardContent>
