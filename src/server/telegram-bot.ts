@@ -9,6 +9,7 @@ import {
   evaluateIdCardValidity,
   extractIdCardTokenFromScan,
   getOrCreateIdCardMasterSecret,
+  ID_CARD_TOKEN_PREFIX,
   issueDigitalIdCard,
 } from './id-card-helpers.ts';
 import { renderStudentIdCardPngBuffer } from './id-card-renderer.ts';
@@ -580,50 +581,217 @@ export function resolveUserAccountContext(userId: string): Omit<VerifiedPortalAc
   };
 }
 
+export function normalizeLoginIdentifier(raw: string): string {
+  return raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .replace(/^mailto:/i, '')
+    .replace(/^[`"'<\s]+|[`"'>\s]+$/g, '')
+    .trim();
+}
+
+type IdentifierLookupResult =
+  | { status: 'found'; userId: string; canonicalIdentifier: string }
+  | { status: 'no_portal_login'; roleLabel: string; name: string }
+  | { status: 'school_code'; schoolName: string }
+  | { status: 'empty_db' }
+  | { status: 'not_found' };
+
+export function findPortalAccountByIdentifier(identifierRaw: string): IdentifierLookupResult {
+  const identifier = normalizeLoginIdentifier(identifierRaw);
+  if (!identifier) return { status: 'not_found' };
+
+  const db = getDb();
+
+  // 1. Direct email match in users table
+  const byEmail = db
+    .prepare(`SELECT id, email FROM users WHERE TRIM(LOWER(email)) = LOWER(?) LIMIT 1`)
+    .get(identifier) as { id: string; email: string } | undefined;
+  if (byEmail) {
+    return { status: 'found', userId: byEmail.id, canonicalIdentifier: byEmail.email };
+  }
+
+  // 2. Student admission number match
+  const byAdm = db
+    .prepare(`
+      SELECT id, user_id, first_name, last_name, admission_number
+      FROM students
+      WHERE TRIM(UPPER(admission_number)) = UPPER(?)
+      LIMIT 1
+    `)
+    .get(identifier) as
+    | { id: string; user_id: string | null; first_name: string; last_name: string; admission_number: string }
+    | undefined;
+  if (byAdm) {
+    if (byAdm.user_id) {
+      return { status: 'found', userId: byAdm.user_id, canonicalIdentifier: byAdm.admission_number };
+    }
+    return {
+      status: 'no_portal_login',
+      roleLabel: 'student',
+      name: `${byAdm.first_name} ${byAdm.last_name}`.trim(),
+    };
+  }
+
+  // 3. Teacher staff ID match
+  const byStaff = db
+    .prepare(`
+      SELECT id, user_id, first_name, last_name, staff_id_number
+      FROM teachers
+      WHERE TRIM(UPPER(staff_id_number)) = UPPER(?)
+      LIMIT 1
+    `)
+    .get(identifier) as
+    | { id: string; user_id: string | null; first_name: string; last_name: string; staff_id_number: string }
+    | undefined;
+  if (byStaff) {
+    if (byStaff.user_id) {
+      return { status: 'found', userId: byStaff.user_id, canonicalIdentifier: byStaff.staff_id_number };
+    }
+    return {
+      status: 'no_portal_login',
+      roleLabel: 'teacher',
+      name: `${byStaff.first_name} ${byStaff.last_name}`.trim(),
+    };
+  }
+
+  // 4. Student ID Card serial number (e.g. DT-IDC-2026-0001)
+  const byCard = db
+    .prepare(`
+      SELECT s.user_id, s.first_name, s.last_name, c.card_number
+      FROM student_id_cards c
+      INNER JOIN students s ON s.id = c.student_id
+      WHERE TRIM(UPPER(c.card_number)) = UPPER(?)
+      ORDER BY c.created_at DESC, c.rowid DESC
+      LIMIT 1
+    `)
+    .get(identifier) as
+    | { user_id: string | null; first_name: string; last_name: string; card_number: string }
+    | undefined;
+  if (byCard) {
+    if (byCard.user_id) {
+      return { status: 'found', userId: byCard.user_id, canonicalIdentifier: byCard.card_number };
+    }
+    return {
+      status: 'no_portal_login',
+      roleLabel: 'student',
+      name: `${byCard.first_name} ${byCard.last_name}`.trim(),
+    };
+  }
+
+  // 5. Fallback match on teacher or parent profile email
+  const byTeacherEmail = db
+    .prepare(`
+      SELECT user_id, first_name, last_name, email
+      FROM teachers
+      WHERE TRIM(LOWER(email)) = LOWER(?) AND email != ''
+      LIMIT 1
+    `)
+    .get(identifier) as
+    | { user_id: string | null; first_name: string; last_name: string; email: string }
+    | undefined;
+  if (byTeacherEmail) {
+    if (byTeacherEmail.user_id) {
+      return { status: 'found', userId: byTeacherEmail.user_id, canonicalIdentifier: byTeacherEmail.email };
+    }
+    return {
+      status: 'no_portal_login',
+      roleLabel: 'teacher',
+      name: `${byTeacherEmail.first_name} ${byTeacherEmail.last_name}`.trim(),
+    };
+  }
+
+  const byParentEmail = db
+    .prepare(`
+      SELECT user_id, full_name, email
+      FROM parents
+      WHERE TRIM(LOWER(email)) = LOWER(?) AND email != ''
+      LIMIT 1
+    `)
+    .get(identifier) as { user_id: string | null; full_name: string; email: string } | undefined;
+  if (byParentEmail) {
+    if (byParentEmail.user_id) {
+      return { status: 'found', userId: byParentEmail.user_id, canonicalIdentifier: byParentEmail.email };
+    }
+    return {
+      status: 'no_portal_login',
+      roleLabel: 'parent',
+      name: byParentEmail.full_name,
+    };
+  }
+
+  // 6. Parent phone fallback when digits look like a phone number
+  const digits = identifier.replace(/[^\d]/g, '');
+  if (digits.length >= 7 && !identifier.includes('@')) {
+    const tail = digits.slice(-10);
+    const parentRows = db
+      .prepare(`SELECT user_id, full_name, phone FROM parents WHERE phone != '' AND user_id IS NOT NULL`)
+      .all() as Array<{ user_id: string; full_name: string; phone: string }>;
+    const matchedParents = parentRows.filter((p) => {
+      const pDigits = p.phone.replace(/[^\d]/g, '');
+      return pDigits === digits || (tail.length >= 9 && pDigits.endsWith(tail));
+    });
+    if (matchedParents.length === 1) {
+      return {
+        status: 'found',
+        userId: matchedParents[0].user_id,
+        canonicalIdentifier: matchedParents[0].phone,
+      };
+    }
+  }
+
+  // 7. Helpful hint if user typed a School Code (e.g. DT-XXXX) instead of their personal Email/ID
+  const bySchoolCode = db
+    .prepare(`SELECT name FROM schools WHERE TRIM(UPPER(code)) = UPPER(?) LIMIT 1`)
+    .get(identifier) as { name: string } | undefined;
+  if (bySchoolCode) {
+    return { status: 'school_code', schoolName: bySchoolCode.name };
+  }
+
+  const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM users`).get() as { cnt: number };
+  if ((countRow?.cnt ?? 0) === 0) {
+    return { status: 'empty_db' };
+  }
+
+  return { status: 'not_found' };
+}
+
+export function formatIdentifierLookupError(lookup: Exclude<IdentifierLookupResult, { status: 'found' }>): string {
+  switch (lookup.status) {
+    case 'empty_db':
+      return (
+        'No portal accounts exist in this server database yet. Please open the web portal first to initialize the Platform Owner (/workers/login) or register your school (/register-school). ' +
+        'If hosted on Render, ensure a Persistent Disk is mounted at SQLITE_DB_PATH so accounts persist across deploys.'
+      );
+    case 'school_code':
+      return `That is the School Code for *${lookup.schoolName}*, not a personal account login. Please enter your personal *Portal Email*, *Admission Number*, or *Staff ID*.`;
+    case 'no_portal_login':
+      return `Found ${lookup.roleLabel} profile for *${lookup.name}*, but portal login is not enabled for this profile yet. Ask your School Administrator to enable portal access (or for students, use *Student Digital ID Card Login*).`;
+    case 'not_found':
+    default:
+      return 'No portal account matched that email, admission number, or staff ID.';
+  }
+}
+
 export function verifyCredentialsForTelegramLink(
   identifierRaw: string,
   passwordRaw: string,
 ): { ok: true; account: VerifiedPortalAccount } | { ok: false; error: string } {
-  const identifier = identifierRaw.trim();
+  const identifier = normalizeLoginIdentifier(identifierRaw);
   const password = passwordRaw;
   if (!identifier || !password) {
     return { ok: false, error: 'Please provide both your email/ID and password.' };
   }
 
+  const lookup = findPortalAccountByIdentifier(identifier);
+  if (lookup.status !== 'found') {
+    return { ok: false, error: formatIdentifierLookupError(lookup) };
+  }
+
   const db = getDb();
-  let targetUserId: string | null = null;
-
-  const byEmail = db
-    .prepare(`SELECT id FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1`)
-    .get(identifier) as { id: string } | undefined;
-  if (byEmail) {
-    targetUserId = byEmail.id;
-  }
-
-  if (!targetUserId) {
-    const byAdm = db
-      .prepare(`SELECT user_id FROM students WHERE UPPER(admission_number) = UPPER(?) AND user_id IS NOT NULL LIMIT 1`)
-      .get(identifier) as { user_id: string } | undefined;
-    if (byAdm) targetUserId = byAdm.user_id;
-  }
-
-  if (!targetUserId) {
-    const byStaff = db
-      .prepare(`SELECT user_id FROM teachers WHERE UPPER(staff_id_number) = UPPER(?) AND user_id IS NOT NULL LIMIT 1`)
-      .get(identifier) as { user_id: string } | undefined;
-    if (byStaff) targetUserId = byStaff.user_id;
-  }
-
-  if (!targetUserId) {
-    return {
-      ok: false,
-      error: 'No portal account matched that email, admission number, or staff ID.',
-    };
-  }
-
   const user = db
     .prepare(`SELECT id, password_hash, is_active FROM users WHERE id = ?`)
-    .get(targetUserId) as { id: string; password_hash: string; is_active: number } | undefined;
+    .get(lookup.userId) as { id: string; password_hash: string; is_active: number } | undefined;
 
   if (!user || user.is_active !== 1 || !verifyPassword(password, user.password_hash)) {
     return { ok: false, error: 'Invalid password. Please verify your portal credentials and try again.' };
@@ -3339,21 +3507,80 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
     const state = getChatState(chatId);
     if (state) {
       if (state.step === 'awaiting_identifier') {
-        setChatState(chatId, 'awaiting_password', { identifier: text });
-        await sendTelegramMessage(chatId, `🔑 Now enter your *portal password* for \`${text}\`:`);
+        const cleaned = normalizeLoginIdentifier(text);
+        if (extractIdCardTokenFromScan(cleaned).startsWith(ID_CARD_TOKEN_PREFIX)) {
+          const idVerified = authenticateIdCardForTelegramLink(cleaned);
+          if (!idVerified.ok) {
+            await sendTelegramMessage(chatId, `❌ ${idVerified.error}`, {
+              inlineKeyboard: buildUnlinkedKeyboard(),
+            });
+            return;
+          }
+          clearChatState(chatId);
+          saveTelegramLink(chatId, username, idVerified.account);
+          const link = getTelegramLink(chatId)!;
+          await sendTelegramMessage(
+            chatId,
+            `✅ *Digital ID Verified!*\nWelcome *${idVerified.account.fullName}*.`,
+          );
+          await sendRoleDashboardWelcome(chatId, link);
+          return;
+        }
+
+        // Allow users to paste "email password" or "email\npassword" in one message
+        const pairMatch = text.trim().match(/^(\S+)\s+([\s\S]+)$/);
+        if (pairMatch) {
+          const firstLookup = findPortalAccountByIdentifier(pairMatch[1]);
+          if (firstLookup.status === 'found') {
+            const verified = verifyCredentialsForTelegramLink(pairMatch[1], pairMatch[2].trim());
+            if (!verified.ok) {
+              setChatState(chatId, 'awaiting_password', { identifier: firstLookup.canonicalIdentifier });
+              await sendTelegramMessage(
+                chatId,
+                `❌ ${verified.error}\n\n🔑 Reply with your *portal password* for \`${firstLookup.canonicalIdentifier}\` (or send \`/cancel\`):`,
+              );
+              return;
+            }
+            clearChatState(chatId);
+            saveTelegramLink(chatId, username, verified.account);
+            const link = getTelegramLink(chatId)!;
+            await sendTelegramMessage(
+              chatId,
+              `✅ *Verified & Linked!*\nWelcome *${verified.account.fullName}* (${verified.account.summaryLabel}).`,
+            );
+            await sendRoleDashboardWelcome(chatId, link);
+            return;
+          }
+        }
+
+        const lookup = findPortalAccountByIdentifier(cleaned);
+        if (lookup.status !== 'found') {
+          await sendTelegramMessage(
+            chatId,
+            `❌ ${formatIdentifierLookupError(lookup)}\n\nPlease check and enter your *Portal Email*, *Admission Number*, or *Staff ID* again (or send \`/cancel\`):`,
+          );
+          return;
+        }
+
+        setChatState(chatId, 'awaiting_password', { identifier: lookup.canonicalIdentifier });
+        await sendTelegramMessage(chatId, `🔑 Now enter your *portal password* for \`${lookup.canonicalIdentifier}\`:`);
         return;
       }
 
       if (state.step === 'awaiting_password') {
         const identifier = String(state.payload.identifier || '');
-        clearChatState(chatId);
         const verified = verifyCredentialsForTelegramLink(identifier, text);
         if (!verified.ok) {
-          await sendTelegramMessage(chatId, `❌ ${verified.error}`, {
-            inlineKeyboard: buildUnlinkedKeyboard(),
-          });
+          await sendTelegramMessage(
+            chatId,
+            `❌ ${verified.error}\n\nTry entering your password again for \`${identifier}\`, or tap *Sign In / Link Portal Account* to use a different email/ID.`,
+            {
+              inlineKeyboard: buildUnlinkedKeyboard(),
+            },
+          );
           return;
         }
+        clearChatState(chatId);
         saveTelegramLink(chatId, username, verified.account);
         const link = getTelegramLink(chatId)!;
         await sendTelegramMessage(
@@ -3498,6 +3725,65 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
         const link = getTelegramLink(chatId);
         if (link) {
           await startPhotoUploadWizard(chatId, link, text.trim());
+          return;
+        }
+      }
+    } else {
+      // No active state: if user is unlinked and directly types a DTID QR, email, or email+password, handle login smoothly
+      const existingLink = getTelegramLink(chatId);
+      if (!existingLink) {
+        const cleaned = normalizeLoginIdentifier(text);
+        if (extractIdCardTokenFromScan(cleaned).startsWith(ID_CARD_TOKEN_PREFIX)) {
+          const verified = authenticateIdCardForTelegramLink(cleaned);
+          if (verified.ok) {
+            saveTelegramLink(chatId, username, verified.account);
+            const link = getTelegramLink(chatId)!;
+            await sendTelegramMessage(
+              chatId,
+              `✅ *Digital ID Verified!*\nWelcome *${verified.account.fullName}*.`,
+            );
+            await sendRoleDashboardWelcome(chatId, link);
+            return;
+          }
+        }
+
+        const pairMatch = text.trim().match(/^(\S+)\s+([\s\S]+)$/);
+        if (pairMatch) {
+          const firstLookup = findPortalAccountByIdentifier(pairMatch[1]);
+          if (firstLookup.status === 'found') {
+            const verified = verifyCredentialsForTelegramLink(pairMatch[1], pairMatch[2].trim());
+            if (verified.ok) {
+              saveTelegramLink(chatId, username, verified.account);
+              const link = getTelegramLink(chatId)!;
+              await sendTelegramMessage(
+                chatId,
+                `✅ *Verified & Linked!*\nWelcome *${verified.account.fullName}* (${verified.account.summaryLabel}).`,
+              );
+              await sendRoleDashboardWelcome(chatId, link);
+              return;
+            }
+            setChatState(chatId, 'awaiting_password', { identifier: firstLookup.canonicalIdentifier });
+            await sendTelegramMessage(
+              chatId,
+              `❌ ${verified.error}\n\n🔑 Enter your *portal password* for \`${firstLookup.canonicalIdentifier}\`:`,
+            );
+            return;
+          }
+        }
+
+        const directLookup = findPortalAccountByIdentifier(cleaned);
+        if (directLookup.status === 'found') {
+          setChatState(chatId, 'awaiting_password', { identifier: directLookup.canonicalIdentifier });
+          await sendTelegramMessage(chatId, `🔑 Enter your *portal password* for \`${directLookup.canonicalIdentifier}\`:`);
+          return;
+        }
+        if (cleaned.includes('@')) {
+          setChatState(chatId, 'awaiting_identifier');
+          await sendTelegramMessage(
+            chatId,
+            `❌ ${formatIdentifierLookupError(directLookup)}\n\nPlease enter a valid *Portal Email*, *Admission Number*, or *Staff ID*:`,
+            { inlineKeyboard: buildUnlinkedKeyboard() },
+          );
           return;
         }
       }
@@ -3662,13 +3948,14 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
 
     case '/link': {
       if (args.length >= 2) {
-        const identifier = args[0];
+        const identifier = normalizeLoginIdentifier(args[0]);
         const password = args.slice(1).join(' ');
         const verified = verifyCredentialsForTelegramLink(identifier, password);
         if (!verified.ok) {
           await sendTelegramMessage(chatId, `❌ ${verified.error}`);
           return;
         }
+        clearChatState(chatId);
         saveTelegramLink(chatId, username, verified.account);
         const link = getTelegramLink(chatId)!;
         await sendTelegramMessage(
@@ -3680,8 +3967,34 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
       }
 
       if (args.length === 1) {
-        setChatState(chatId, 'awaiting_password', { identifier: args[0] });
-        await sendTelegramMessage(chatId, `🔑 Enter your *portal password* for \`${args[0]}\`:`);
+        const cleaned = normalizeLoginIdentifier(args[0]);
+        if (extractIdCardTokenFromScan(cleaned).startsWith(ID_CARD_TOKEN_PREFIX)) {
+          const verified = authenticateIdCardForTelegramLink(cleaned);
+          if (!verified.ok) {
+            await sendTelegramMessage(chatId, `❌ ${verified.error}`);
+            return;
+          }
+          clearChatState(chatId);
+          saveTelegramLink(chatId, username, verified.account);
+          const link = getTelegramLink(chatId)!;
+          await sendTelegramMessage(
+            chatId,
+            `✅ *Digital ID Verified!*\nWelcome *${verified.account.fullName}*.`,
+          );
+          await sendRoleDashboardWelcome(chatId, link);
+          return;
+        }
+        const lookup = findPortalAccountByIdentifier(cleaned);
+        if (lookup.status !== 'found') {
+          setChatState(chatId, 'awaiting_identifier');
+          await sendTelegramMessage(
+            chatId,
+            `❌ ${formatIdentifierLookupError(lookup)}\n\nPlease check and enter your *Portal Email*, *Admission Number*, or *Staff ID* again:`,
+          );
+          return;
+        }
+        setChatState(chatId, 'awaiting_password', { identifier: lookup.canonicalIdentifier });
+        await sendTelegramMessage(chatId, `🔑 Enter your *portal password* for \`${lookup.canonicalIdentifier}\`:`);
         return;
       }
 
@@ -3739,6 +4052,21 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
       await sendTelegramMessage(chatId, `🔌 Successfully unlinked your Telegram account.`, {
         inlineKeyboard: buildUnlinkedKeyboard(),
       });
+      return;
+    }
+
+    case '/cancel': {
+      clearChatState(chatId);
+      const link = getTelegramLink(chatId);
+      if (link) {
+        await sendTelegramMessage(chatId, `✖️ Cancelled current action.`, {
+          inlineKeyboard: buildRoleMenuKeyboard(link.role),
+        });
+      } else {
+        await sendTelegramMessage(chatId, `✖️ Cancelled. Tap below whenever you are ready to sign in:`, {
+          inlineKeyboard: buildUnlinkedKeyboard(),
+        });
+      }
       return;
     }
 

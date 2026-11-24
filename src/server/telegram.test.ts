@@ -1016,4 +1016,93 @@ test('School Admin can register students (with photo & auto account), teachers, 
   assert.ok(parentCardCall, 'Linked parent receives full Digital Student ID Card PNG for their single ward');
 });
 
+test('Interactive Telegram login supports formatted emails, card serials, single-message credentials, password retries, and helpful errors', async () => {
+  const db = getDb();
 
+  // 1. Unlinked user tapping Sign In -> school code gives specific hint & keeps awaiting_identifier
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_start_link_edge',
+        from: { id: 30001, username: 'edge_user' },
+        message: { message_id: 201, chat: { id: 30001 } },
+        data: 'auth:start_link',
+      },
+    },
+    baseUrl,
+  );
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30001 }, text: 'DT-ALPH01', from: { username: 'edge_user' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30001' && c.text.includes('School Code')));
+
+  // 2. Unprovisioned student admission number gives clear portal-login-not-enabled hint
+  const davidRow = db.prepare(`SELECT admission_number FROM students WHERE first_name = 'David' AND last_name = 'Adeleke'`).get() as any;
+  assert.ok(davidRow);
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30001 }, text: davidRow.admission_number, from: { username: 'edge_user' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30001' && c.text.includes('portal login is not enabled')));
+
+  // 3. Formatted mailto:<email> + wrong password retries without losing state, then succeeds on retry
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30001 }, text: '<mailto:principal@alphacrest.test>', from: { username: 'edge_user' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30001' && c.text.includes('Now enter your *portal password*')));
+
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30001 }, text: 'WrongPass1', from: { username: 'edge_user' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30001' && c.text.includes('Try entering your password again')));
+
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30001 }, text: 'PortalPass123!', from: { username: 'edge_user' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30001' && c.text.includes('Verified & Linked')));
+  const linked30001 = db.prepare(`SELECT role FROM telegram_links WHERE telegram_chat_id = '30001'`).get() as any;
+  assert.equal(linked30001?.role, 'school_admin');
+
+  // 4. Single-message "identifier password" directly from awaiting_identifier or unlinked prompt works cleanly
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_start_link_pair',
+        from: { id: 30002, username: 'pair_user' },
+        message: { message_id: 202, chat: { id: 30002 } },
+        data: 'auth:start_link',
+      },
+    },
+    baseUrl,
+  );
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30002 }, text: 'DT-IDC-2026-0001 PortalPass123!', from: { username: 'pair_user' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30002' && c.text.includes('Verified & Linked')));
+  const linked30002 = db.prepare(`SELECT role FROM telegram_links WHERE telegram_chat_id = '30002'`).get() as any;
+  assert.equal(linked30002?.role, 'student');
+
+  // 5. Unlinked user typing their email directly without clicking Sign In first transitions cleanly to password step
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30003 }, text: 'teacher@alphacrest.test', from: { username: 'tch_direct' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30003' && c.text.includes('Enter your *portal password*')));
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30003 }, text: 'PortalPass123!', from: { username: 'tch_direct' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30003' && c.text.includes('Verified & Linked')));
+  const linked30003 = db.prepare(`SELECT role FROM telegram_links WHERE telegram_chat_id = '30003'`).get() as any;
+  assert.equal(linked30003?.role, 'teacher');
+});
