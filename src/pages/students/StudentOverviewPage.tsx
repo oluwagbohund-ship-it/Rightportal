@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { Award, Building2, CalendarDays, FileText, GraduationCap, IdCard } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../../components/dashboard/PageHeader.tsx';
 import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
+import { Skeleton, TableSkeleton } from '../../components/ui/skeleton.tsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { apiRequest } from '../../lib/api.ts';
@@ -97,28 +99,32 @@ export function StudentOverviewPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Learning Portal"
         title="Student Portal"
         description="Your institutional enrollment record, assigned class curriculum, and academic progression timeline."
         actions={
           <div className="flex flex-wrap gap-2">
             <Link to="/dashboard/student/id-card">
-              <Button type="button" size="sm" className="whitespace-nowrap shrink-0">
-                My Digital ID Card
+              <Button type="button" size="sm">
+                <IdCard className="h-4 w-4" aria-hidden="true" />
+                <span>My Digital ID Card</span>
               </Button>
             </Link>
             <Link to="/dashboard/student/attendance">
-              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+              <Button type="button" size="sm" variant="outline">
                 Attendance Log
               </Button>
             </Link>
             <Link to="/dashboard/student/results">
-              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
-                Published Results
+              <Button type="button" size="sm" variant="outline">
+                <Award className="h-4 w-4" aria-hidden="true" />
+                <span>Published Results</span>
               </Button>
             </Link>
             <Link to="/dashboard/student/report-cards">
-              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
-                Report Cards
+              <Button type="button" size="sm" variant="outline">
+                <FileText className="h-4 w-4" aria-hidden="true" />
+                <span>Report Cards</span>
               </Button>
             </Link>
           </div>
@@ -131,59 +137,78 @@ export function StudentOverviewPage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Enrolled Institution</CardDescription>
-            <CardTitle className="text-lg">{user?.activeSchoolName ?? '—'}</CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Enrolled Institution</CardDescription>
+            <Building2 className="h-4 w-4 text-[#2563EB]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500">
-            {studentRecord
-              ? `Admission No: ${studentRecord.admission_number}`
-              : `${loading ? 'Loading...' : title} · ${user?.activeSchoolCode ?? '—'}`}
+          <CardContent>
+            <p className="font-display text-lg font-bold text-[#0F172A] truncate">
+              {user?.activeSchoolName ?? '—'}
+            </p>
+            <p className="mt-1 font-mono text-xs text-slate-500">
+              {studentRecord
+                ? `Admission No: ${studentRecord.admission_number}`
+                : `${loading ? 'Loading...' : title} · ${user?.activeSchoolCode ?? '—'}`}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Class Placement</CardDescription>
-            <CardTitle className="text-lg">
-              {loading
-                ? '—'
-                : studentRecord?.class_name
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Class Placement</CardDescription>
+            <GraduationCap className="h-4 w-4 text-[#2563EB]" aria-hidden="true" />
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-6 w-28 my-0.5" />
+            ) : (
+              <p className="font-display text-lg font-bold text-[#0F172A]">
+                {studentRecord?.class_name
                   ? `${studentRecord.class_name}${studentRecord.arm_name ? ` (${studentRecord.arm_name})` : ''}`
                   : 'Pending Assignment'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-xs text-slate-500 capitalize">
-            {studentRecord ? `Status: ${studentRecord.status}` : 'Assigned by School Administration'}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-slate-500 capitalize">
+              {studentRecord ? `Status: ${studentRecord.status}` : 'Assigned by School Administration'}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Active Academic Term</CardDescription>
-            <CardTitle className="text-lg">
-              {loading ? '—' : activeTerm ? activeTerm.name : activeSession ? activeSession.term : 'Not Yet Activated'}
-            </CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Active Academic Term</CardDescription>
+            <CalendarDays className="h-4 w-4 text-[#2563EB]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500">
-            {activeTerm
-              ? `${activeTerm.session_name} (${activeTerm.start_date} → ${activeTerm.end_date})`
-              : activeSession
-                ? `${activeSession.name} (${activeSession.start_date} → ${activeSession.end_date})`
-                : 'Your School Administrator will activate the upcoming term.'}
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-6 w-28 my-0.5" />
+            ) : (
+              <p className="font-display text-lg font-bold text-[#0F172A]">
+                {activeTerm ? activeTerm.name : activeSession ? activeSession.term : 'Not Yet Activated'}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-slate-500 truncate">
+              {activeTerm
+                ? `${activeTerm.session_name} (${activeTerm.start_date} → ${activeTerm.end_date})`
+                : activeSession
+                  ? `${activeSession.name} (${activeSession.start_date} → ${activeSession.end_date})`
+                  : 'Your School Administrator will activate the upcoming term.'}
+            </p>
           </CardContent>
         </Card>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="border-b border-slate-100">
             <CardTitle>Class Subjects ({classSubjects.length})</CardTitle>
             <CardDescription>Curriculum subjects registered for your current class</CardDescription>
           </CardHeader>
-          <CardContent>
-            {classSubjects.length === 0 ? (
-              <p className="text-xs text-slate-500">
+          <CardContent className="pt-4">
+            {loading ? (
+              <TableSkeleton rows={4} cols={4} />
+            ) : classSubjects.length === 0 ? (
+              <p className="text-xs text-slate-500 py-4">
                 No subjects have been mapped to your current class yet.
               </p>
             ) : (
@@ -193,7 +218,7 @@ export function StudentOverviewPage() {
                     <TableHead>Code</TableHead>
                     <TableHead>Subject</TableHead>
                     <TableHead>Mode</TableHead>
-                    <TableHead>Periods/Wk</TableHead>
+                    <TableHead className="text-right">Periods/Wk</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -204,7 +229,7 @@ export function StudentOverviewPage() {
                       <TableCell className="text-xs text-slate-600">
                         {sub.is_compulsory === 1 ? 'Compulsory' : 'Optional'}
                       </TableCell>
-                      <TableCell className="text-xs tabular-nums">{sub.weekly_periods}</TableCell>
+                      <TableCell className="text-xs text-right tabular-nums">{sub.weekly_periods}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -214,13 +239,15 @@ export function StudentOverviewPage() {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="border-b border-slate-100">
             <CardTitle>Placement &amp; Promotion History ({promotionHistory.length})</CardTitle>
             <CardDescription>Official academic movement ledger</CardDescription>
           </CardHeader>
-          <CardContent>
-            {promotionHistory.length === 0 ? (
-              <p className="text-xs text-slate-500">No class placement movements recorded yet.</p>
+          <CardContent className="pt-4">
+            {loading ? (
+              <TableSkeleton rows={4} cols={3} />
+            ) : promotionHistory.length === 0 ? (
+              <p className="text-xs text-slate-500 py-4">No class placement movements recorded yet.</p>
             ) : (
               <Table>
                 <TableHeader>
@@ -252,7 +279,7 @@ export function StudentOverviewPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-4">
+        <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-slate-100">
           <div>
             <CardTitle>Published Terminal Results ({publishedTermResults.length})</CardTitle>
             <CardDescription>Official academic results released by School Administration</CardDescription>
@@ -263,9 +290,11 @@ export function StudentOverviewPage() {
             </Button>
           </Link>
         </CardHeader>
-        <CardContent>
-          {publishedTermResults.length === 0 ? (
-            <p className="text-xs text-slate-500">
+        <CardContent className="pt-4">
+          {loading ? (
+            <TableSkeleton rows={3} cols={6} />
+          ) : publishedTermResults.length === 0 ? (
+            <p className="text-xs text-slate-500 py-4">
               No published terminal results are available yet. Published grades and report cards will appear here automatically.
             </p>
           ) : (

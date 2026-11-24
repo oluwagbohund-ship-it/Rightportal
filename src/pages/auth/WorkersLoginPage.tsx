@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Shield } from 'lucide-react';
+import { Lock, Shield, ShieldCheck } from 'lucide-react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Logo } from '../../components/brand/Logo.tsx';
 import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
@@ -94,165 +94,196 @@ export function WorkersLoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col justify-between bg-[#0F172A] px-4 py-10 text-white">
-      <div className="mx-auto w-full max-w-md flex items-center justify-between text-xs text-slate-400">
-        <Logo variant="white" size="xs" />
-        <Link to="/" className="hover:text-white transition-colors">
-          Return to Public Site
-        </Link>
-      </div>
-
-      <div className="mx-auto w-full max-w-md my-auto py-8">
-        <div className="mb-6 space-y-2">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold tracking-wider text-[#60A5FA]">
-            <Shield className="h-4 w-4" aria-hidden="true" />
-            <span>Internal Platform Operations</span>
+    <div className="min-h-screen flex flex-col justify-between bg-[#0F172A] text-white">
+      <header className="border-b border-slate-800/80 bg-slate-950/30">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8 text-xs text-slate-400">
+          <Logo variant="white" size="xs" />
+          <div className="flex items-center gap-4">
+            <Link to="/login/school" className="hidden sm:inline hover:text-white transition-colors">
+              School Portal Login
+            </Link>
+            <Link to="/" className="hover:text-white transition-colors">
+              Return to Public Site
+            </Link>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">
-            DAVE TIMI EDTECH WORKERS LOGIN
-          </h1>
-          <p className="text-sm font-medium text-slate-300">Authorized Workforce Access.</p>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            This environment is exclusively for authorized DT platform personnel.
-          </p>
         </div>
+      </header>
 
-        <Card className="border-slate-800 bg-white text-[#0F172A] shadow-xl">
-          {statusLoading ? (
-            <CardContent className="p-6 text-sm text-slate-500">
-              Checking workforce environment status...
-            </CardContent>
-          ) : !ownerClaimed ? (
-            <>
-              <CardHeader>
-                <CardTitle>Initialize Platform Owner</CardTitle>
-                <CardDescription>
-                  No Platform Owner account has been claimed yet. Create the founding owner credentials to lock bootstrap initialization.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={(e) => void handleBootstrap(e)} className="space-y-4">
-                  {error ? <Alert variant="error">{error}</Alert> : null}
+      <main className="mx-auto w-full max-w-6xl flex-1 flex items-center px-4 py-10 sm:px-6 lg:px-8">
+        <div className="grid w-full gap-10 lg:grid-cols-12 lg:items-center">
+          {/* Left Internal Ops Briefing */}
+          <div className="lg:col-span-6 space-y-6">
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#60A5FA]">
+                <Shield className="h-4 w-4" aria-hidden="true" />
+                <span>Internal Platform Operations</span>
+              </div>
+              <h1
+                className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-white leading-[1.1]"
+                style={{ textWrap: 'balance' }}
+              >
+                Dave Timi EdTech Workers Console
+              </h1>
+              <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-lg">
+                Authorized internal operations workspace for managing school tenants, issuing onboarding codes, configuring the universal Telegram bot, and auditing platform security.
+              </p>
+            </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="owner-name">Full Name</Label>
-                    <Input
-                      id="owner-name"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="David Oluwagbohun"
-                    />
-                  </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 space-y-3 max-w-lg text-xs text-slate-300">
+              <div className="flex items-center gap-2.5 font-semibold text-white">
+                <Lock className="h-4 w-4 text-[#60A5FA]" aria-hidden="true" />
+                <span>Separated Authentication Boundary</span>
+              </div>
+              <p className="leading-relaxed text-slate-400">
+                Workforce sessions run in an isolated internal environment distinct from school tenant logins. Every sign-in attempt is recorded in the platform audit ledger.
+              </p>
+              <div className="flex items-center gap-2 text-[11px] text-slate-400 pt-1">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                <span>CSRF-protected · HttpOnly session cookies</span>
+              </div>
+            </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="owner-email">Workforce Email</Label>
-                    <Input
-                      id="owner-email"
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="owner@davetimi.com"
-                    />
-                  </div>
+            <div className="max-w-lg">
+              <TelegramBotConnectCard mode="login" audience="workers" darkSurface />
+            </div>
+          </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="owner-password">
-                      Password (min 10 chars, 1 uppercase, 1 number)
-                    </Label>
-                    <Input
-                      id="owner-password"
-                      type="password"
-                      required
-                      minLength={10}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Create Platform Owner password"
-                    />
-                  </div>
+          {/* Right Form Card */}
+          <div className="lg:col-span-6 lg:max-w-md lg:w-full lg:ml-auto">
+            <Card className="border-slate-700 bg-white text-[#0F172A]">
+              {statusLoading ? (
+                <CardContent className="p-6 text-sm text-slate-500">
+                  Checking workforce environment status...
+                </CardContent>
+              ) : !ownerClaimed ? (
+                <>
+                  <CardHeader>
+                    <CardTitle>Initialize Platform Owner</CardTitle>
+                    <CardDescription>
+                      No Platform Owner account has been claimed yet. Create the founding owner credentials to lock bootstrap initialization.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form onSubmit={(e) => void handleBootstrap(e)} className="space-y-4">
+                      {error ? <Alert variant="error">{error}</Alert> : null}
 
-                  {requiresBootstrapKey ? (
-                    <div className="space-y-1.5">
-                      <Label htmlFor="owner-key">Bootstrap Security Key</Label>
-                      <Input
-                        id="owner-key"
-                        type="password"
-                        required
-                        value={bootstrapKey}
-                        onChange={(e) => setBootstrapKey(e.target.value)}
-                        placeholder="Enter DT_BOOTSTRAP_KEY"
-                      />
-                    </div>
-                  ) : null}
+                      <div className="space-y-1.5">
+                        <Label htmlFor="owner-name">Full Name</Label>
+                        <Input
+                          id="owner-name"
+                          required
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          placeholder="David Oluwagbohun"
+                        />
+                      </div>
 
-                  <Button type="submit" variant="navy" className="w-full" disabled={submitting}>
-                    {submitting ? 'Initializing Owner Access...' : 'Claim Platform Owner Access'}
-                  </Button>
-                </form>
-              </CardContent>
-            </>
-          ) : (
-            <>
-              <CardHeader>
-                <CardTitle>Workforce Sign In</CardTitle>
-                <CardDescription>
-                  Authenticate with your authorized DT platform personnel credentials.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={(e) => void handleLogin(e)} className="space-y-4">
-                  {error ? <Alert variant="error">{error}</Alert> : null}
+                      <div className="space-y-1.5">
+                        <Label htmlFor="owner-email">Workforce Email</Label>
+                        <Input
+                          id="owner-email"
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="owner@davetimi.com"
+                        />
+                      </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="worker-email">DT Workforce Email</Label>
-                    <Input
-                      id="worker-email"
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="personnel@davetimi.com"
-                    />
-                  </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="owner-password">
+                          Password (min 10 chars, 1 uppercase, 1 number)
+                        </Label>
+                        <Input
+                          id="owner-password"
+                          type="password"
+                          required
+                          minLength={10}
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="Create Platform Owner password"
+                        />
+                      </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="worker-password">Password</Label>
-                    <Input
-                      id="worker-password"
-                      type="password"
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Enter your password"
-                    />
-                  </div>
+                      {requiresBootstrapKey ? (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="owner-key">Bootstrap Security Key</Label>
+                          <Input
+                            id="owner-key"
+                            type="password"
+                            required
+                            value={bootstrapKey}
+                            onChange={(e) => setBootstrapKey(e.target.value)}
+                            placeholder="Enter DT_BOOTSTRAP_KEY"
+                          />
+                        </div>
+                      ) : null}
 
-                  <Button type="submit" variant="navy" className="w-full" disabled={submitting}>
-                    {submitting ? 'Verifying Credentials...' : 'Sign In to Workers Console'}
-                  </Button>
-                  <div className="text-center pt-1">
-                    <Link
-                      to="/forgot-password?env=workers"
-                      className="text-xs font-medium text-[#1E3A8A] hover:underline"
-                    >
-                      Forgot workforce password?
-                    </Link>
-                  </div>
-                </form>
-              </CardContent>
-            </>
-          )}
-        </Card>
+                      <Button type="submit" variant="navy" className="w-full" disabled={submitting}>
+                        {submitting ? 'Initializing Owner Access...' : 'Claim Platform Owner Access'}
+                      </Button>
+                    </form>
+                  </CardContent>
+                </>
+              ) : (
+                <>
+                  <CardHeader>
+                    <CardTitle>Workforce Sign In</CardTitle>
+                    <CardDescription>
+                      Authenticate with your authorized DT platform personnel credentials.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form onSubmit={(e) => void handleLogin(e)} className="space-y-4">
+                      {error ? <Alert variant="error">{error}</Alert> : null}
 
-        <div className="mt-4">
-          <TelegramBotConnectCard mode="login" audience="workers" darkSurface />
+                      <div className="space-y-1.5">
+                        <Label htmlFor="worker-email">DT Workforce Email</Label>
+                        <Input
+                          id="worker-email"
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="personnel@davetimi.com"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="worker-password">Password</Label>
+                        <Input
+                          id="worker-password"
+                          type="password"
+                          required
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="Enter your password"
+                        />
+                      </div>
+
+                      <Button type="submit" variant="navy" className="w-full" disabled={submitting}>
+                        {submitting ? 'Verifying Credentials...' : 'Sign In to Workers Console'}
+                      </Button>
+                      <div className="text-center pt-1">
+                        <Link
+                          to="/forgot-password?env=workers"
+                          className="text-xs font-medium text-[#1E3A8A] hover:underline"
+                        >
+                          Forgot workforce password?
+                        </Link>
+                      </div>
+                    </form>
+                  </CardContent>
+                </>
+              )}
+            </Card>
+          </div>
         </div>
-      </div>
+      </main>
 
-      <div className="mx-auto w-full max-w-md text-center text-xs text-slate-500">
+      <footer className="border-t border-slate-800/80 py-4 px-4 text-center text-xs text-slate-500">
         All authentication attempts are recorded in the platform security audit log.
-      </div>
+      </footer>
     </div>
   );
 }

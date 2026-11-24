@@ -61,11 +61,11 @@ export function ResetPasswordPage() {
 
       <div className="mx-auto w-full max-w-md my-auto py-8">
         <div className="mb-6 space-y-2">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold tracking-wider text-[#1E3A8A]">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#1E3A8A]">
             <ShieldCheck className="h-4 w-4" aria-hidden="true" />
             <span>One-Time Token Verification</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#0F172A]">
+          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#0F172A]">
             Set a New Password
           </h1>
           <p className="text-sm text-slate-600 leading-relaxed">

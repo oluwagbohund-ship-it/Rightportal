@@ -104,7 +104,7 @@ async function startServer() {
     },
   );
 
-  const port = Number(process.env.PORT || 3000);
+  const port = Number(process.env.APP_PORT || (process.env.PORT && process.env.PORT !== '8080' ? process.env.PORT : 3000));
   app.listen(port, '0.0.0.0', () => {
     console.log(`Dave Timi EdTech Systems running on http://0.0.0.0:${port}`);
   });

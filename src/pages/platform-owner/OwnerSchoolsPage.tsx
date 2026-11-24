@@ -154,6 +154,7 @@ export function OwnerSchoolsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Executive & Tenants"
         title="School Management & Access Codes"
         description="Issue unique onboarding codes required to create a school and enter the platform, and manage registered school tenants."
         actions={

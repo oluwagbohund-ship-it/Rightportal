@@ -55,11 +55,11 @@ export function AdmissionApplicationsPage() {
     void loadQueue();
   }, [loadQueue]);
 
-  const dotColor = (status: string) => {
-    if (status === 'approved') return 'bg-emerald-600';
-    if (status === 'converted') return 'bg-[#2563EB]';
-    if (status === 'rejected') return 'bg-red-600';
-    return 'bg-amber-500';
+  const statusTextColor = (status: string) => {
+    if (status === 'approved') return 'text-emerald-700';
+    if (status === 'converted') return 'text-[#1E3A8A]';
+    if (status === 'rejected') return 'text-red-700';
+    return 'text-amber-700';
   };
 
   return (
@@ -168,8 +168,7 @@ export function AdmissionApplicationsPage() {
                         {app.documents_count ?? 0}
                       </TableCell>
                       <TableCell>
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize text-slate-700">
-                          <span className={`h-1.5 w-1.5 rounded-full ${dotColor(app.status)}`} />
+                        <span className={`text-xs font-semibold capitalize ${statusTextColor(app.status)}`}>
                           {app.status.replaceAll('_', ' ')}
                         </span>
                       </TableCell>

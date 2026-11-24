@@ -13,6 +13,7 @@ export interface PortalNavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   end?: boolean;
+  section?: string;
 }
 
 interface PortalShellProps {
@@ -61,46 +62,73 @@ export function PortalShell({
     }
   };
 
+  const userInitials = user.fullName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || 'DT';
+
   const SidebarContent = (
     <div className="flex h-full flex-col bg-[#0F172A] text-slate-200">
-      <div className="shrink-0 border-b border-slate-800 px-5 py-4 space-y-2">
+      <div className="shrink-0 border-b border-slate-800/90 px-5 py-4 space-y-2">
         <Logo variant="white" size="xs" />
-        <p className="text-[11px] font-medium text-slate-400 pl-0.5">{portalLabel}</p>
+        <p className="text-[11px] font-medium text-slate-400 pl-0.5 truncate">{portalLabel}</p>
       </div>
 
-      <nav aria-label={`${portalLabel} Navigation`} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 space-y-1">
-        {navItems.map((item) => {
+      <nav
+        aria-label={`${portalLabel} Navigation`}
+        className="min-h-0 flex-1 overflow-y-auto px-3 py-4 space-y-0.5"
+      >
+        {navItems.map((item, idx) => {
           const Icon = item.icon;
+          const prevSection = idx > 0 ? navItems[idx - 1]?.section : undefined;
+          const showSectionHeader = Boolean(item.section && item.section !== prevSection);
           return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) =>
-                cn(
-                  'flex w-full min-h-[40px] items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
-                  isActive
-                    ? sidebarAccentClass
-                    : 'text-slate-300 hover:bg-slate-800/80 hover:text-white',
-                )
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{item.label}</span>
-            </NavLink>
+            <React.Fragment key={item.to}>
+              {showSectionHeader ? (
+                <p
+                  className={cn(
+                    'px-3 text-[11px] font-medium text-slate-400/90 tracking-tight',
+                    idx === 0 ? 'pb-1 pt-0.5' : 'pt-4 pb-1 border-t border-slate-800/70 mt-3',
+                  )}
+                >
+                  {item.section}
+                </p>
+              ) : null}
+              <NavLink
+                to={item.to}
+                end={item.end}
+                onClick={() => setSidebarOpen(false)}
+                className={({ isActive }) =>
+                  cn(
+                    'flex w-full min-h-[38px] items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
+                    isActive
+                      ? sidebarAccentClass
+                      : 'text-slate-300 hover:bg-slate-800/75 hover:text-white',
+                  )
+                }
+              >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">{item.label}</span>
+              </NavLink>
+            </React.Fragment>
           );
         })}
       </nav>
 
-      <div className="shrink-0 border-t border-slate-800 p-4 space-y-3">
-        <div className="space-y-0.5">
-          <p className="text-sm font-semibold text-white truncate">{user.fullName}</p>
-          <p className="text-xs text-slate-400 truncate">{user.email}</p>
-          <p className="text-xs text-slate-400 pt-1">
-            {user.roleName}
-            {user.activeSchoolCode ? ` · ${user.activeSchoolCode}` : ''}
-          </p>
+      <div className="shrink-0 border-t border-slate-800 p-4 space-y-3 bg-slate-950/35">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 font-display text-xs font-bold text-white">
+            {userInitials}
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-sm font-semibold text-white truncate">{user.fullName}</p>
+            <p className="text-[11px] text-slate-400 truncate">
+              {user.roleName}
+              {user.activeSchoolCode ? ` · ${user.activeSchoolCode}` : ''}
+            </p>
+          </div>
         </div>
         <Button
           type="button"
@@ -117,7 +145,7 @@ export function PortalShell({
           type="button"
           disabled={signingOut}
           onClick={() => void handleLogoutAll()}
-          className="w-full text-center text-xs text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline disabled:opacity-50"
+          className="w-full text-center text-[11px] text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline disabled:opacity-50"
         >
           Sign out all devices
         </button>
@@ -153,7 +181,7 @@ export function PortalShell({
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 sm:px-6 lg:px-8">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 backdrop-blur-sm px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -164,22 +192,31 @@ export function PortalShell({
               <Menu className="h-5 w-5" />
             </button>
             <div className="min-w-0">
-              <p className="text-xs text-slate-500 truncate">{breadcrumbPrefix}</p>
-              <p className="text-sm sm:text-base font-semibold text-[#0F172A] truncate">
+              <p className="text-[11px] text-slate-500 truncate">{breadcrumbPrefix}</p>
+              <p className="font-display text-sm sm:text-base font-semibold text-[#0F172A] truncate">
                 {portalLabel}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4 shrink-0 text-xs text-slate-600">
-            <span className="hidden sm:inline font-mono">{headerRightText}</span>
+          <div className="flex items-center gap-3 shrink-0 text-xs text-slate-600">
+            <span className="hidden sm:inline font-mono tabular-nums text-[11px] border border-slate-200 bg-slate-50 px-2.5 py-1 rounded-md text-slate-700">
+              {headerRightText}
+            </span>
           </div>
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
           <div className="mx-auto max-w-6xl space-y-6">
             {banner}
-            <Suspense fallback={<BrandLoader label="Loading workspace module..." className="rounded-xl border border-slate-200 bg-white" />}>
+            <Suspense
+              fallback={
+                <BrandLoader
+                  label="Loading workspace module..."
+                  className="rounded-xl border border-slate-200 bg-white"
+                />
+              }
+            >
               {children}
             </Suspense>
           </div>

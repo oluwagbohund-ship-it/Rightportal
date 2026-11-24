@@ -5,13 +5,13 @@ import { PortalShell, type PortalNavItem } from '../components/layout/PortalShel
 import { useAuth } from '../context/AuthContext.tsx';
 
 const PARENT_NAV: PortalNavItem[] = [
-  { to: '/dashboard/parent', label: 'Guardian Portal', icon: Home, end: true },
-  { to: '/dashboard/parent/academics', label: 'Ward Academics', icon: BookOpen },
-  { to: '/dashboard/parent/results', label: 'Ward Results', icon: Award },
-  { to: '/dashboard/parent/report-cards', label: 'Report Cards', icon: FileText },
-  { to: '/dashboard/parent/wards', label: 'Ward Linkage', icon: Users },
-  { to: '/dashboard/parent/calendar', label: 'Term Calendar', icon: Calendar },
-  { to: '/dashboard/parent/notifications', label: 'Notifications', icon: Bell },
+  { section: 'Family Overview', to: '/dashboard/parent', label: 'Guardian Portal', icon: Home, end: true },
+  { section: 'Family Overview', to: '/dashboard/parent/wards', label: 'Ward Linkage', icon: Users },
+  { section: 'Family Overview', to: '/dashboard/parent/calendar', label: 'Term Calendar', icon: Calendar },
+  { section: 'Academic Reports', to: '/dashboard/parent/academics', label: 'Ward Academics', icon: BookOpen },
+  { section: 'Academic Reports', to: '/dashboard/parent/results', label: 'Ward Results', icon: Award },
+  { section: 'Academic Reports', to: '/dashboard/parent/report-cards', label: 'Report Cards', icon: FileText },
+  { section: 'Academic Reports', to: '/dashboard/parent/notifications', label: 'Notifications', icon: Bell },
 ];
 
 export function ParentLayout() {

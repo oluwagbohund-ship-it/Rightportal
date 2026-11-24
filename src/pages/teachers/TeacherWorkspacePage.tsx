@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { BookOpen, Building2, CalendarDays, ClipboardEdit, QrCode, UserCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../../components/dashboard/PageHeader.tsx';
 import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
+import { Skeleton, TableSkeleton } from '../../components/ui/skeleton.tsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { apiRequest } from '../../lib/api.ts';
@@ -110,22 +112,25 @@ export function TeacherWorkspacePage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Classroom & Faculty"
         title="Faculty Workspace"
         description="Tenant-scoped educator workspace displaying your assigned classes, subjects, and authorized classroom students."
         actions={
           <div className="flex flex-wrap gap-2">
             <Link to="/dashboard/teacher/attendance">
-              <Button type="button" size="sm" className="whitespace-nowrap shrink-0">
-                Scan ID Attendance
+              <Button type="button" size="sm">
+                <QrCode className="h-4 w-4" aria-hidden="true" />
+                <span>Scan ID Attendance</span>
               </Button>
             </Link>
             <Link to="/dashboard/teacher/academics/scores">
-              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
-                Enter CA &amp; Exam Scores
+              <Button type="button" size="sm" variant="outline">
+                <ClipboardEdit className="h-4 w-4" aria-hidden="true" />
+                <span>Enter CA &amp; Exam Scores</span>
               </Button>
             </Link>
             <Link to="/dashboard/teacher/academics/comments">
-              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+              <Button type="button" size="sm" variant="outline">
                 Remarks &amp; Traits
               </Button>
             </Link>
@@ -137,58 +142,84 @@ export function TeacherWorkspacePage() {
 
       <TelegramBotConnectCard mode="portal" audience="school" />
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>School Tenant</CardDescription>
-            <CardTitle className="text-lg">{user?.activeSchoolName ?? '—'}</CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">School Tenant</CardDescription>
+            <Building2 className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="font-mono text-xs text-slate-500">
-            {teacherRecord ? `Staff ID: ${teacherRecord.staff_id_number}` : `Code: ${user?.activeSchoolCode ?? '—'}`}
+          <CardContent>
+            <p className="font-display text-lg font-bold text-[#0F172A] truncate">
+              {user?.activeSchoolName ?? '—'}
+            </p>
+            <p className="mt-1 font-mono text-xs text-slate-500">
+              {teacherRecord ? `Staff ID: ${teacherRecord.staff_id_number}` : `Code: ${user?.activeSchoolCode ?? '—'}`}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Faculty Role</CardDescription>
-            <CardTitle className="text-lg">{loading ? '—' : profileTitle}</CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Faculty Role</CardDescription>
+            <UserCheck className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500">
-            {teacherRecord?.qualifications || 'Scoped Faculty Educator'}
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-6 w-32 my-0.5" />
+            ) : (
+              <p className="font-display text-lg font-bold text-[#0F172A] truncate">{profileTitle}</p>
+            )}
+            <p className="mt-1 text-xs text-slate-500 truncate">
+              {teacherRecord?.qualifications || 'Scoped Faculty Educator'}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Current Academic Term</CardDescription>
-            <CardTitle className="text-lg">
-              {loading ? '—' : activeTerm ? activeTerm.name : currentSession ? currentSession.term : 'Pending Setup'}
-            </CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Current Academic Term</CardDescription>
+            <CalendarDays className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500">
-            {activeTerm
-              ? `${activeTerm.session_name} (${activeTerm.start_date} → ${activeTerm.end_date})`
-              : currentSession
-                ? currentSession.name
-                : 'No active term configured yet'}
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-6 w-28 my-0.5" />
+            ) : (
+              <p className="font-display text-lg font-bold text-[#0F172A]">
+                {activeTerm ? activeTerm.name : currentSession ? currentSession.term : 'Pending Setup'}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-slate-500 truncate">
+              {activeTerm
+                ? `${activeTerm.session_name} (${activeTerm.start_date} → ${activeTerm.end_date})`
+                : currentSession
+                  ? currentSession.name
+                  : 'No active term configured yet'}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Assigned Scope</CardDescription>
-            <CardTitle className="text-lg tabular-nums">
-              {loading ? '—' : `${assignedClasses.length} classes · ${assignedSubjects.length} subjects`}
-            </CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Assigned Scope</CardDescription>
+            <BookOpen className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500 tabular-nums">
-            {permittedStudents.length} authorized student(s)
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-6 w-36 my-0.5" />
+            ) : (
+              <p className="font-display text-lg font-bold text-[#0F172A] tabular-nums">
+                {assignedClasses.length} classes · {assignedSubjects.length} subjects
+              </p>
+            )}
+            <p className="mt-1 text-xs text-slate-500 tabular-nums">
+              {permittedStudents.length} authorized student(s)
+            </p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-4">
+        <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-slate-100">
           <div>
             <CardTitle>Academic Score Submission Activity ({scoreBatches.length})</CardTitle>
             <CardDescription>
@@ -201,11 +232,20 @@ export function TeacherWorkspacePage() {
             </Button>
           </Link>
         </CardHeader>
-        <CardContent>
-          {scoreBatches.length === 0 ? (
-            <p className="text-xs text-slate-500">
-              No score batches submitted yet. Open Score Entry to begin recording student assessments.
-            </p>
+        <CardContent className="pt-4">
+          {loading ? (
+            <TableSkeleton rows={3} cols={4} />
+          ) : scoreBatches.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 py-8 px-4 text-center space-y-3">
+              <p className="text-xs text-slate-500">
+                No score batches submitted yet. Open Score Entry to begin recording student assessments.
+              </p>
+              <Link to="/dashboard/teacher/academics/scores" className="inline-block">
+                <Button type="button" size="sm" variant="outline">
+                  Start Score Entry
+                </Button>
+              </Link>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -235,13 +275,15 @@ export function TeacherWorkspacePage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="border-b border-slate-100">
             <CardTitle>Assigned Classes ({assignedClasses.length})</CardTitle>
             <CardDescription>Classes where you serve as active Class Teacher or form tutor</CardDescription>
           </CardHeader>
-          <CardContent>
-            {assignedClasses.length === 0 ? (
-              <p className="text-xs text-slate-500">No class teacher assignments active yet.</p>
+          <CardContent className="pt-4">
+            {loading ? (
+              <TableSkeleton rows={3} cols={3} />
+            ) : assignedClasses.length === 0 ? (
+              <p className="text-xs text-slate-500 py-4">No class teacher assignments active yet.</p>
             ) : (
               <Table>
                 <TableHeader>
@@ -266,13 +308,15 @@ export function TeacherWorkspacePage() {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="border-b border-slate-100">
             <CardTitle>Assigned Subjects ({assignedSubjects.length})</CardTitle>
             <CardDescription>Curriculum subjects assigned to you by School Administration</CardDescription>
           </CardHeader>
-          <CardContent>
-            {assignedSubjects.length === 0 ? (
-              <p className="text-xs text-slate-500">No subject allocations assigned yet.</p>
+          <CardContent className="pt-4">
+            {loading ? (
+              <TableSkeleton rows={3} cols={3} />
+            ) : assignedSubjects.length === 0 ? (
+              <p className="text-xs text-slate-500 py-4">No subject allocations assigned yet.</p>
             ) : (
               <Table>
                 <TableHeader>
@@ -302,15 +346,17 @@ export function TeacherWorkspacePage() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="border-b border-slate-100">
           <CardTitle>Permitted Classroom Students ({permittedStudents.length})</CardTitle>
           <CardDescription>
             Students strictly enrolled in classes assigned to you inside {user?.activeSchoolName}.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {permittedStudents.length === 0 ? (
-            <p className="text-sm text-slate-500">
+        <CardContent className="pt-4">
+          {loading ? (
+            <TableSkeleton rows={4} cols={4} />
+          ) : permittedStudents.length === 0 ? (
+            <p className="text-sm text-slate-500 py-4">
               No students currently fall within your assigned classes or subject allocations.
             </p>
           ) : (

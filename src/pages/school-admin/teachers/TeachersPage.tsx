@@ -88,10 +88,10 @@ export function TeachersPage() {
     }
   };
 
-  const dotColor = (status: string) => {
-    if (status === 'active') return 'bg-emerald-600';
-    if (status === 'on_leave') return 'bg-amber-500';
-    return 'bg-red-600';
+  const statusTextColor = (status: string) => {
+    if (status === 'active') return 'text-emerald-700';
+    if (status === 'on_leave') return 'text-amber-700';
+    return 'text-red-700';
   };
 
   return (
@@ -197,8 +197,7 @@ export function TeachersPage() {
                         {t.active_classes_count ?? 0} classes · {t.active_subjects_count ?? 0} subjects
                       </TableCell>
                       <TableCell>
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize text-slate-700">
-                          <span className={`h-1.5 w-1.5 rounded-full ${dotColor(t.employment_status)}`} />
+                        <span className={`text-xs font-semibold capitalize ${statusTextColor(t.employment_status)}`}>
                           {t.employment_status.replace('_', ' ')}
                         </span>
                       </TableCell>

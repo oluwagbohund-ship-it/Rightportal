@@ -42,6 +42,7 @@ export function OwnerSchoolVerificationPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Executive & Tenants"
         title="Institution Verification Queue"
         description="Review newly registered school tenants and approve or suspend institutional access."
       />
@@ -50,25 +51,28 @@ export function OwnerSchoolVerificationPage() {
       {success ? <Alert variant="success">{success}</Alert> : null}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Pending & Registered Schools</CardTitle>
+        <CardHeader className="border-b border-slate-100">
+          <CardTitle>Pending &amp; Registered Schools</CardTitle>
           <CardDescription>Schools awaiting platform verification or inspection.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-4">
           {loading ? (
-            <p className="text-sm text-slate-500">Loading queue...</p>
+            <p className="text-sm text-slate-500 py-6 text-center">Loading verification queue...</p>
           ) : queue.length === 0 ? (
-            <p className="text-sm text-slate-500">No schools currently pending verification.</p>
+            <div className="rounded-lg border border-dashed border-slate-200 py-10 text-center space-y-1">
+              <p className="text-sm font-medium text-[#0F172A]">All caught up</p>
+              <p className="text-xs text-slate-500">No schools are currently pending verification.</p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>School Name</TableHead>
-                  <TableHead>Code & Slug</TableHead>
+                  <TableHead>Code &amp; Slug</TableHead>
                   <TableHead>Country / City</TableHead>
                   <TableHead>Contact Email</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Action</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -83,17 +87,16 @@ export function OwnerSchoolVerificationPage() {
                     </TableCell>
                     <TableCell className="text-xs">{s.contact_email}</TableCell>
                     <TableCell>
-                      <span className="inline-flex px-2 py-0.5 text-xs font-medium rounded-md capitalize bg-amber-50 text-amber-700">
+                      <span className="inline-flex px-2 py-0.5 text-xs font-medium rounded-md border border-amber-200 capitalize bg-amber-50 text-amber-800">
                         {s.status.replace('_', ' ')}
                       </span>
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
+                    <TableCell className="text-right">
+                      <div className="inline-flex items-center gap-2">
                         <Button
                           type="button"
                           size="sm"
                           onClick={() => handleDecision(s.id, 'active', 'Verified by Platform Operations')}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white"
                         >
                           Approve
                         </Button>

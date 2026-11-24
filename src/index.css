@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @theme {
+  --font-display: "Bricolage Grotesque", "Plus Jakarta Sans", -apple-system, sans-serif;
   --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -28,8 +29,27 @@
   }
 }
 
+.font-display {
+  font-family: var(--font-display);
+}
+
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+@keyframes dt-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.dt-skeleton {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: dt-shimmer 1.6s ease-in-out infinite;
 }
 
 @keyframes dt-logo-roll {

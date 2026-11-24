@@ -33,6 +33,9 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    optimizeDeps: {
+      include: ['jsqr', 'qrcode', 'clsx', 'tailwind-merge'],
+    },
     build: {
       rollupOptions: {
         input: {

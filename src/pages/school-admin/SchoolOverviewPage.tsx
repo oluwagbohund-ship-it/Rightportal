@@ -1,11 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, BookOpen, Building2, ClipboardCheck, GraduationCap, UserCheck, Users } from 'lucide-react';
+import {
+  ArrowRight,
+  BookOpen,
+  Building2,
+  CalendarDays,
+  ClipboardCheck,
+  GraduationCap,
+  Plus,
+  UserCheck,
+  Users,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../../components/dashboard/PageHeader.tsx';
 import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
+import { Skeleton, TableSkeleton } from '../../components/ui/skeleton.tsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { apiRequest } from '../../lib/api.ts';
@@ -176,6 +187,7 @@ export function SchoolOverviewPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="School Administration"
         title={school?.name ? `${school.name} — Overview` : 'School Overview'}
         description="Real-time operational metrics across students, faculty, guardians, classes, curriculum subjects, and admissions."
         actions={
@@ -192,7 +204,8 @@ export function SchoolOverviewPage() {
             </Link>
             <Link to="/dashboard/school-admin/students/register">
               <Button type="button" size="sm">
-                Register Student
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                <span>Register Student</span>
               </Button>
             </Link>
           </div>
@@ -201,8 +214,9 @@ export function SchoolOverviewPage() {
 
       {error ? <Alert variant="error">{error}</Alert> : null}
 
+      {/* Institution Masthead */}
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-5 pb-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4 min-w-0">
               {school?.logo_file_id ? (
@@ -212,26 +226,29 @@ export function SchoolOverviewPage() {
                   className="h-14 w-14 rounded-lg border border-slate-200 object-cover bg-slate-50 shrink-0"
                 />
               ) : (
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-[#0F172A] text-white font-bold text-lg">
-                  {(school?.name ?? 'S').slice(0, 2).toUpperCase()}
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-[#0F172A] text-white font-display font-bold text-lg">
+                  {(school?.name ?? user?.activeSchoolName ?? 'SC').slice(0, 2).toUpperCase()}
                 </div>
               )}
-              <div className="min-w-0">
+              <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2.5">
-                  <p className="text-base font-bold text-[#0F172A] truncate">
+                  <p className="font-display text-base sm:text-lg font-bold text-[#0F172A] truncate">
                     {school?.name ?? user?.activeSchoolName ?? 'School Institution'}
                   </p>
-                  <span className="font-mono text-xs font-semibold text-[#1E3A8A]">
+                  <span className="font-mono text-xs font-semibold text-[#1E3A8A] border border-blue-200 bg-blue-50/70 px-2 py-0.5 rounded-md">
                     {school?.code ?? user?.activeSchoolCode}
                   </span>
                 </div>
-                <p className="mt-0.5 text-xs text-slate-600">
-                  {school?.motto ? `"${school.motto}" · ` : ''}
-                  {activeTerm
-                    ? `Active Term: ${activeTerm.session_name} · ${activeTerm.name} (${activeTerm.start_date} → ${activeTerm.end_date})`
-                    : currentSession
-                      ? `Current Session: ${currentSession.name} (${currentSession.term})`
-                      : 'No active academic term configured yet'}
+                <p className="text-xs text-slate-600 flex flex-wrap items-center gap-1.5">
+                  <CalendarDays className="h-3.5 w-3.5 text-slate-400 shrink-0" aria-hidden="true" />
+                  <span>
+                    {school?.motto ? `"${school.motto}" · ` : ''}
+                    {activeTerm
+                      ? `Active Term: ${activeTerm.session_name} · ${activeTerm.name} (${activeTerm.start_date} → ${activeTerm.end_date})`
+                      : currentSession
+                        ? `Current Session: ${currentSession.name} (${currentSession.term})`
+                        : 'No active academic term configured yet'}
+                  </span>
                 </p>
               </div>
             </div>
@@ -252,6 +269,7 @@ export function SchoolOverviewPage() {
         </CardContent>
       </Card>
 
+      {/* Directory KPI Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {metrics.map((metric) => {
           const Icon = metric.icon;
@@ -259,16 +277,20 @@ export function SchoolOverviewPage() {
             <Link key={metric.label} to={metric.to} className="group block">
               <Card className="h-full transition-colors group-hover:border-[#2563EB]/50">
                 <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-                  <CardDescription className="font-medium text-slate-600">
+                  <CardDescription className="text-xs font-medium text-slate-600">
                     {metric.label}
                   </CardDescription>
                   <Icon className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
                 </CardHeader>
                 <CardContent>
-                  <p className="text-3xl font-bold tracking-tight text-[#0F172A] tabular-nums">
-                    {loading ? '—' : metric.value}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">{metric.meta}</p>
+                  {loading ? (
+                    <Skeleton className="h-9 w-16 my-0.5" />
+                  ) : (
+                    <p className="font-display text-3xl font-bold tracking-tight text-[#0F172A] tabular-nums">
+                      {metric.value}
+                    </p>
+                  )}
+                  <p className="mt-1.5 text-xs text-slate-500">{metric.meta}</p>
                 </CardContent>
               </Card>
             </Link>
@@ -276,8 +298,9 @@ export function SchoolOverviewPage() {
         })}
       </div>
 
+      {/* Academic Engine & Results Readiness — Hairline-divided single surface */}
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100">
           <div>
             <CardTitle>Academic Engine &amp; Results Readiness</CardTitle>
             <CardDescription>
@@ -302,34 +325,46 @@ export function SchoolOverviewPage() {
             </Link>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3 text-sm">
-          <div className="rounded-lg border border-slate-200 bg-[#F8FAFC] p-3">
-            <p className="text-xs text-slate-500">Pending Score Batches</p>
-            <p className="mt-1 text-2xl font-bold text-[#0F172A] tabular-nums">
-              {loading ? '—' : counts.pendingScoreBatches ?? 0}
-            </p>
+        <div className="grid divide-y sm:divide-y-0 sm:divide-x divide-slate-200 sm:grid-cols-3 text-sm">
+          <div className="p-5 sm:p-6">
+            <p className="text-xs font-medium text-slate-500">Pending Score Batches</p>
+            {loading ? (
+              <Skeleton className="mt-2 h-8 w-14" />
+            ) : (
+              <p className="mt-1.5 font-display text-2xl font-bold text-[#0F172A] tabular-nums">
+                {counts.pendingScoreBatches ?? 0}
+              </p>
+            )}
           </div>
-          <div className="rounded-lg border border-slate-200 bg-[#F8FAFC] p-3">
-            <p className="text-xs text-slate-500">Published Report Cards</p>
-            <p className="mt-1 text-2xl font-bold text-[#1E3A8A] tabular-nums">
-              {loading ? '—' : counts.publishedResultsCount ?? 0}
-            </p>
+          <div className="p-5 sm:p-6">
+            <p className="text-xs font-medium text-slate-500">Published Report Cards</p>
+            {loading ? (
+              <Skeleton className="mt-2 h-8 w-14" />
+            ) : (
+              <p className="mt-1.5 font-display text-2xl font-bold text-[#1E3A8A] tabular-nums">
+                {counts.publishedResultsCount ?? 0}
+              </p>
+            )}
           </div>
-          <div className="rounded-lg border border-slate-200 bg-[#F8FAFC] p-3">
-            <p className="text-xs text-slate-500">Pending Promotion Approvals</p>
-            <p className="mt-1 text-2xl font-bold text-[#0F172A] tabular-nums">
-              {loading ? '—' : counts.pendingPromotionsCount ?? 0}
-            </p>
+          <div className="p-5 sm:p-6">
+            <p className="text-xs font-medium text-slate-500">Pending Promotion Approvals</p>
+            {loading ? (
+              <Skeleton className="mt-2 h-8 w-14" />
+            ) : (
+              <p className="mt-1.5 font-display text-2xl font-bold text-[#0F172A] tabular-nums">
+                {counts.pendingPromotionsCount ?? 0}
+              </p>
+            )}
           </div>
-        </CardContent>
+        </div>
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-slate-100">
             <div>
               <CardTitle>Recent Students</CardTitle>
-              <CardDescription>Latest student admissions & placements</CardDescription>
+              <CardDescription>Latest student admissions &amp; placements</CardDescription>
             </div>
             <Link
               to="/dashboard/school-admin/students"
@@ -339,13 +374,22 @@ export function SchoolOverviewPage() {
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </Link>
           </CardHeader>
-          <CardContent>
-            {recentStudents.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center">
-                <p className="text-sm font-medium text-[#0F172A]">No students registered yet</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Register a student directly or convert an approved admission application.
-                </p>
+          <CardContent className="pt-4">
+            {loading ? (
+              <TableSkeleton rows={4} cols={4} />
+            ) : recentStudents.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 py-8 px-4 text-center space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-[#0F172A]">No students registered yet</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Register a student directly or convert an approved admission application.
+                  </p>
+                </div>
+                <Link to="/dashboard/school-admin/students/register" className="inline-block">
+                  <Button type="button" size="sm" variant="outline">
+                    Register First Student
+                  </Button>
+                </Link>
               </div>
             ) : (
               <Table>
@@ -374,7 +418,9 @@ export function SchoolOverviewPage() {
                           ? `${st.class_name}${st.arm_name ? ` (${st.arm_name})` : ''}`
                           : 'Unassigned'}
                       </TableCell>
-                      <TableCell className="text-xs capitalize text-slate-700">{st.status}</TableCell>
+                      <TableCell className="text-xs font-medium capitalize text-emerald-700">
+                        {st.status}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -384,7 +430,7 @@ export function SchoolOverviewPage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-slate-100">
             <div>
               <CardTitle>Recent Teachers</CardTitle>
               <CardDescription>Newly onboarded academic staff</CardDescription>
@@ -397,13 +443,22 @@ export function SchoolOverviewPage() {
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </Link>
           </CardHeader>
-          <CardContent>
-            {recentTeachers.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center">
-                <p className="text-sm font-medium text-[#0F172A]">No teachers registered yet</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Add teachers to assign them to classes and curriculum subjects.
-                </p>
+          <CardContent className="pt-4">
+            {loading ? (
+              <TableSkeleton rows={4} cols={4} />
+            ) : recentTeachers.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 py-8 px-4 text-center space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-[#0F172A]">No teachers registered yet</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Add teachers to assign them to classes and curriculum subjects.
+                  </p>
+                </div>
+                <Link to="/dashboard/school-admin/teachers/register" className="inline-block">
+                  <Button type="button" size="sm" variant="outline">
+                    Add First Teacher
+                  </Button>
+                </Link>
               </div>
             ) : (
               <Table>
@@ -430,7 +485,7 @@ export function SchoolOverviewPage() {
                       <TableCell className="text-xs text-slate-600">
                         {t.specialization || 'General'}
                       </TableCell>
-                      <TableCell className="text-xs capitalize text-slate-700">
+                      <TableCell className="text-xs font-medium capitalize text-emerald-700">
                         {t.employment_status.replace('_', ' ')}
                       </TableCell>
                     </TableRow>
@@ -443,7 +498,7 @@ export function SchoolOverviewPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-4">
+        <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-slate-100">
           <div>
             <CardTitle>Recent Administrative Activity</CardTitle>
             <CardDescription>Audited actions across school records inside your tenant</CardDescription>
@@ -456,9 +511,16 @@ export function SchoolOverviewPage() {
             <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </Link>
         </CardHeader>
-        <CardContent>
-          {recentActivity.length === 0 ? (
-            <p className="text-sm text-slate-500">No administrative activity recorded yet.</p>
+        <CardContent className="pt-4">
+          {loading ? (
+            <TableSkeleton rows={4} cols={4} />
+          ) : recentActivity.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 py-8 text-center">
+              <p className="text-sm font-medium text-[#0F172A]">No administrative activity recorded yet</p>
+              <p className="mt-1 text-xs text-slate-500">
+                School updates, admissions decisions, and result publications appear here.
+              </p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -475,7 +537,7 @@ export function SchoolOverviewPage() {
                     <TableCell className="font-mono text-xs text-slate-500 tabular-nums">
                       {item.created_at}
                     </TableCell>
-                    <TableCell className="font-medium text-xs text-[#0F172A]">{item.action}</TableCell>
+                    <TableCell className="font-mono text-xs text-[#0F172A]">{item.action}</TableCell>
                     <TableCell className="text-xs text-slate-600">{item.actor_email}</TableCell>
                     <TableCell className="text-xs text-slate-500">{item.resource_type}</TableCell>
                   </TableRow>

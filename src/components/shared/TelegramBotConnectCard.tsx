@@ -226,13 +226,13 @@ export function TelegramBotConnectCard({
             <Bot className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               <CardTitle className="text-base">
                 Universal Telegram Bot {botInfo.botUsername ? `(@${botInfo.botUsername})` : ''}
               </CardTitle>
               {isLinked ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
-                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>Connected</span>
                 </span>
               ) : null}

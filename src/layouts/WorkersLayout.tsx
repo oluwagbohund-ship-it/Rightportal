@@ -18,18 +18,18 @@ import { PortalShell, type PortalNavItem } from '../components/layout/PortalShel
 import { useAuth } from '../context/AuthContext.tsx';
 
 const OWNER_NAV: PortalNavItem[] = [
-  { to: '/dashboard/owner', label: 'Platform Overview', icon: LayoutDashboard, end: true },
-  { to: '/dashboard/owner/schools', label: 'School Management', icon: Building2 },
-  { to: '/dashboard/owner/verification', label: 'Verification Queue', icon: CheckCircle2 },
-  { to: '/dashboard/owner/workforce', label: 'Workforce Management', icon: Users },
-  { to: '/dashboard/owner/database', label: 'Database & Backups', icon: Database },
-  { to: '/dashboard/owner/files', label: 'Files & Storage', icon: FolderLock },
-  { to: '/dashboard/owner/notifications', label: 'Notifications', icon: Bell },
-  { to: '/dashboard/owner/telegram', label: 'Telegram Bot', icon: Bot },
-  { to: '/dashboard/owner/settings', label: 'Platform Settings', icon: Settings },
-  { to: '/dashboard/owner/security', label: 'Security Monitoring', icon: ShieldAlert },
-  { to: '/dashboard/owner/audit-logs', label: 'Audit Logs', icon: Activity },
-  { to: '/dashboard/owner/ai-core', label: 'DT AI CORE', icon: Cpu },
+  { section: 'Executive & Tenants', to: '/dashboard/owner', label: 'Platform Overview', icon: LayoutDashboard, end: true },
+  { section: 'Executive & Tenants', to: '/dashboard/owner/schools', label: 'School Management', icon: Building2 },
+  { section: 'Executive & Tenants', to: '/dashboard/owner/verification', label: 'Verification Queue', icon: CheckCircle2 },
+  { section: 'Executive & Tenants', to: '/dashboard/owner/workforce', label: 'Workforce Management', icon: Users },
+  { section: 'Integrations & Ops', to: '/dashboard/owner/telegram', label: 'Telegram Bot', icon: Bot },
+  { section: 'Integrations & Ops', to: '/dashboard/owner/notifications', label: 'Notifications', icon: Bell },
+  { section: 'Integrations & Ops', to: '/dashboard/owner/files', label: 'Files & Storage', icon: FolderLock },
+  { section: 'Integrations & Ops', to: '/dashboard/owner/database', label: 'Database & Backups', icon: Database },
+  { section: 'Governance & Security', to: '/dashboard/owner/settings', label: 'Platform Settings', icon: Settings },
+  { section: 'Governance & Security', to: '/dashboard/owner/security', label: 'Security Monitoring', icon: ShieldAlert },
+  { section: 'Governance & Security', to: '/dashboard/owner/audit-logs', label: 'Audit Logs', icon: Activity },
+  { section: 'Governance & Security', to: '/dashboard/owner/ai-core', label: 'DT AI CORE', icon: Cpu },
 ];
 
 export function WorkersLayout() {

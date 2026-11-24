@@ -141,11 +141,11 @@ export function FeaturesPage() {
         <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
           <div className="grid gap-10 lg:grid-cols-12 lg:items-stretch">
             <div className="lg:col-span-6 flex flex-col justify-center space-y-5">
-              <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
+              <p className="text-xs font-semibold tracking-tight text-[#2563EB]">
                 What We Offer
               </p>
               <h1
-                className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-[#0F172A] leading-[1.1]"
+                className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-[#0F172A] leading-[1.08]"
                 style={{ textWrap: 'balance' }}
               >
                 Focused school essentials built for everyday flow.
@@ -160,7 +160,7 @@ export function FeaturesPage() {
                 </Button>
                 <a
                   href="/contact.html"
-                  className="elastic-interactive inline-flex h-11 items-center rounded-lg border border-slate-300 bg-white px-5 text-sm font-medium text-[#0F172A] hover:bg-slate-50"
+                  className="inline-flex h-11 items-center rounded-lg border border-slate-300 bg-white px-5 text-sm font-medium text-[#0F172A] hover:bg-slate-50 transition-colors"
                 >
                   Request School Demo
                 </a>
@@ -172,14 +172,14 @@ export function FeaturesPage() {
                 src={PUBLIC_MEDIA.digitalClassroomImg}
                 alt="Students completing digital tablet assessments in a sunlit modern classroom"
                 fallbackTitle="Interactive Digital Classroom"
-                className="w-full min-h-[300px] lg:h-full shadow-lg"
+                className="w-full min-h-[300px] lg:h-full border border-slate-200"
               >
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/65 via-transparent to-transparent pointer-events-none" />
                 <div className="absolute bottom-5 left-5 right-5 text-white">
                   <p className="text-xs font-medium text-blue-200">
                     Classroom to Parent Office
                   </p>
-                  <p className="text-base font-semibold">
+                  <p className="font-display text-base font-semibold">
                     Live attendance, digital CBT exams, and clean report generation.
                   </p>
                 </div>
@@ -192,7 +192,7 @@ export function FeaturesPage() {
       {/* Curated 4 Core Offerings in Graphical 2x2 Grid */}
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 space-y-8">
         <div className="max-w-2xl space-y-2">
-          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#0F172A]">
+          <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#0F172A]">
             Four Core Offerings
           </h2>
           <p className="text-sm sm:text-base text-slate-600">
@@ -206,21 +206,21 @@ export function FeaturesPage() {
             return (
               <div
                 key={mod.id}
-                className="elastic-card rounded-2xl border border-slate-200 bg-white p-6 sm:p-7 space-y-5 shadow-sm"
+                className="rounded-xl border border-slate-200 bg-white p-6 sm:p-7 space-y-5 transition-colors hover:border-slate-300"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-xs font-mono font-semibold text-[#2563EB] tabular-nums">
                       {mod.index}. Core Offering
                     </p>
-                    <h3 className="mt-1 text-xl font-bold text-[#0F172A]">{mod.title}</h3>
+                    <h3 className="mt-1 font-display text-xl font-bold text-[#0F172A]">{mod.title}</h3>
                   </div>
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF2FF] text-[#1E3A8A]">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-[#F8FAFC] text-[#1E3A8A]">
                     <Icon className="h-5 w-5" aria-hidden />
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-slate-100 bg-[#F8FAFC] p-3">
+                <div className="rounded-lg border border-slate-200/70 bg-[#F8FAFC] p-3">
                   <CardVectorVisual id={mod.id} />
                 </div>
 
@@ -231,15 +231,15 @@ export function FeaturesPage() {
         </div>
       </section>
 
-      {/* Elastic Interactive Role Preview Switcher */}
+      {/* Interactive Role Preview Switcher */}
       <section className="mx-auto max-w-7xl px-4 pb-20 sm:px-6 lg:px-8">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-10 shadow-sm space-y-8">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 sm:p-10 space-y-8">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5">
-              <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
+              <p className="text-xs font-semibold tracking-tight text-[#2563EB]">
                 Role Experience Switcher
               </p>
-              <h2 className="text-2xl font-bold tracking-tight text-[#0F172A]">
+              <h2 className="font-display text-2xl font-bold tracking-tight text-[#0F172A]">
                 See how each school member uses the portal
               </h2>
             </div>

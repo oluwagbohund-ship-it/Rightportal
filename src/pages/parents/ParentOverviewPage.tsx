@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { BookOpen, Building2, CalendarDays, FileText, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../../components/dashboard/PageHeader.tsx';
 import { TelegramBotConnectCard } from '../../components/shared/TelegramBotConnectCard.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
+import { Skeleton, TableSkeleton } from '../../components/ui/skeleton.tsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { apiRequest } from '../../lib/api.ts';
@@ -84,18 +86,21 @@ export function ParentOverviewPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="Family & Wards"
         title="Guardian Portal"
         description="Verified guardian visibility into your linked wards, published academic results, report cards, and active school calendar."
         actions={
           <div className="flex flex-wrap gap-2">
             <Link to="/dashboard/parent/academics">
               <Button type="button" size="sm">
-                Ward Academics
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
+                <span>Ward Academics</span>
               </Button>
             </Link>
             <Link to="/dashboard/parent/report-cards">
               <Button type="button" size="sm" variant="outline">
-                Report Cards
+                <FileText className="h-4 w-4" aria-hidden="true" />
+                <span>Report Cards</span>
               </Button>
             </Link>
             <Link to="/dashboard/parent/calendar">
@@ -111,45 +116,103 @@ export function ParentOverviewPage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Associated School</CardDescription>
-            <CardTitle className="text-lg">{user?.activeSchoolName ?? '—'}</CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Associated School</CardDescription>
+            <Building2 className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500">
-            School Code: {user?.activeSchoolCode ?? '—'}{' '}
-            {schoolContact ? `· ${schoolContact}` : ''}
+          <CardContent>
+            <p className="font-display text-lg font-bold text-[#0F172A] truncate">
+              {user?.activeSchoolName ?? '—'}
+            </p>
+            <p className="mt-1 font-mono text-xs text-slate-500 truncate">
+              School Code: {user?.activeSchoolCode ?? '—'}{' '}
+              {schoolContact ? `· ${schoolContact}` : ''}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Current Academic Term</CardDescription>
-            <CardTitle className="text-lg">
-              {loading ? '—' : activeTerm ? activeTerm.name : activeSession ? activeSession.term : 'Pending'}
-            </CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Current Academic Term</CardDescription>
+            <CalendarDays className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500">
-            {activeTerm
-              ? `${activeTerm.session_name} (${activeTerm.start_date} → ${activeTerm.end_date})`
-              : activeSession
-                ? activeSession.name
-                : 'No active academic term published yet'}
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-6 w-28 my-0.5" />
+            ) : (
+              <p className="font-display text-lg font-bold text-[#0F172A]">
+                {activeTerm ? activeTerm.name : activeSession ? activeSession.term : 'Pending'}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-slate-500 truncate">
+              {activeTerm
+                ? `${activeTerm.session_name} (${activeTerm.start_date} → ${activeTerm.end_date})`
+                : activeSession
+                  ? activeSession.name
+                  : 'No active academic term published yet'}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Linked Student Wards</CardDescription>
-            <CardTitle className="text-2xl tabular-nums">{loading ? '—' : wards.length}</CardTitle>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium text-slate-600">Linked Student Wards</CardDescription>
+            <Users className="h-4 w-4 text-[#1E3A8A]" aria-hidden="true" />
           </CardHeader>
-          <CardContent className="text-xs text-slate-500">
-            {wardPublications.length} published report card summary(ies)
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-8 w-12 my-0.5" />
+            ) : (
+              <p className="font-display text-2xl font-bold text-[#0F172A] tabular-nums">{wards.length}</p>
+            )}
+            <p className="mt-1 text-xs text-slate-500 tabular-nums">
+              {wardPublications.length} published report card summary(ies)
+            </p>
           </CardContent>
         </Card>
       </div>
 
+      {wards.length > 0 ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-slate-100">
+            <div>
+              <CardTitle>Linked Wards ({wards.length})</CardTitle>
+              <CardDescription>Enrolled students connected to your guardian profile</CardDescription>
+            </div>
+            <Link to="/dashboard/parent/wards">
+              <Button type="button" size="sm" variant="outline">
+                Ward Linkage
+              </Button>
+            </Link>
+          </CardHeader>
+          <div className="divide-y divide-slate-100">
+            {wards.map((ward) => (
+              <div key={ward.student_id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 text-sm">
+                <div>
+                  <p className="font-semibold text-[#0F172A]">
+                    {ward.first_name} {ward.last_name}
+                  </p>
+                  <p className="text-xs text-slate-500 font-mono">
+                    {ward.admission_number}
+                    {ward.class_name
+                      ? ` · ${ward.class_name}${ward.arm_name ? ` (${ward.arm_name})` : ''}`
+                      : ''}
+                  </p>
+                </div>
+                <Link
+                  to={`/dashboard/parent/academics?studentId=${encodeURIComponent(ward.student_id)}`}
+                  className="text-xs font-semibold text-[#1E3A8A] hover:underline"
+                >
+                  Inspect Academic Progress →
+                </Link>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-4">
+        <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-slate-100">
           <div>
             <CardTitle>Published Ward Academic Summaries ({wardPublications.length})</CardTitle>
             <CardDescription>
@@ -162,13 +225,15 @@ export function ParentOverviewPage() {
             </Button>
           </Link>
         </CardHeader>
-        <CardContent>
-          {wardPublications.length === 0 ? (
-            <div className="space-y-4 text-sm text-slate-600">
-              <p className="text-xs text-slate-500">
+        <CardContent className="pt-4">
+          {loading ? (
+            <TableSkeleton rows={3} cols={6} />
+          ) : wardPublications.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 py-8 px-4 text-center space-y-4">
+              <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
                 No published ward results are available yet. Once School Administration publishes a term’s results, report cards and subject breakdowns will appear here automatically.
               </p>
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap justify-center gap-3">
                 <Link to="/dashboard/parent/wards">
                   <Button type="button" size="sm">
                     View Linked Wards

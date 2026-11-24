@@ -138,11 +138,11 @@ export function PublicLayout() {
             </div>
 
             <div className="md:col-span-3 space-y-3">
-              <p className="text-xs font-semibold tracking-wider text-slate-400">Platform</p>
+              <p className="text-xs font-semibold text-slate-300">Platform</p>
               <ul className="space-y-2 text-sm">
                 {NAV_LINKS.map((item) => (
                   <li key={item.href}>
-                    <a href={item.href} className="text-slate-300 hover:text-white transition-colors">
+                    <a href={item.href} className="text-slate-400 hover:text-white transition-colors">
                       {item.label}
                     </a>
                   </li>
@@ -151,14 +151,14 @@ export function PublicLayout() {
             </div>
 
             <div className="md:col-span-4 space-y-3">
-              <p className="text-xs font-semibold tracking-wider text-slate-400">
+              <p className="text-xs font-semibold text-slate-300">
                 Access Environments
               </p>
               <ul className="space-y-2 text-sm">
                 <li>
                   <Link
                     to="/login/school"
-                    className="text-slate-300 hover:text-white transition-colors"
+                    className="text-slate-400 hover:text-white transition-colors"
                   >
                     School Portal Login
                   </Link>
@@ -166,7 +166,7 @@ export function PublicLayout() {
                 <li>
                   <a
                     href="/register.html"
-                    className="text-slate-300 hover:text-white transition-colors"
+                    className="text-slate-400 hover:text-white transition-colors"
                   >
                     Register an Institution
                   </a>

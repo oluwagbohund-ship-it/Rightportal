@@ -150,12 +150,11 @@ export function ClassesPage() {
                       {cls.subjects_count ?? 0}
                     </TableCell>
                     <TableCell>
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize text-slate-700">
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${
-                            cls.status === 'active' ? 'bg-emerald-600' : 'bg-slate-400'
-                          }`}
-                        />
+                      <span
+                        className={`text-xs font-semibold capitalize ${
+                          cls.status === 'active' ? 'text-emerald-700' : 'text-slate-500'
+                        }`}
+                      >
                         {cls.status}
                       </span>
                     </TableCell>

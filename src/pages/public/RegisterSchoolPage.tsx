@@ -118,11 +118,11 @@ export function RegisterSchoolPage() {
         {/* Left Visual Onboarding Guide */}
         <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-24">
           <div className="space-y-2.5">
-            <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
+            <p className="text-xs font-semibold tracking-tight text-[#2563EB]">
               Authorized School Onboarding
             </p>
             <h1
-              className="text-3xl sm:text-4xl font-bold tracking-tight text-[#0F172A]"
+              className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-[#0F172A]"
               style={{ textWrap: 'balance' }}
             >
               Create Your School Workspace
@@ -136,7 +136,7 @@ export function RegisterSchoolPage() {
             src={PUBLIC_MEDIA.adminDeskImg}
             alt="School administrator desk with academic schedule and student record folders"
             fallbackTitle="School Workspace Onboarding"
-            className="h-52 shadow-md"
+            className="h-52 border border-slate-200"
           />
 
           <div className="space-y-3">
@@ -163,13 +163,13 @@ export function RegisterSchoolPage() {
               <div
                 key={step.num}
                 className={cn(
-                  'elastic-card rounded-xl border p-4 flex items-start gap-3.5 bg-white',
+                  'rounded-xl border p-4 flex items-start gap-3.5 bg-white transition-colors',
                   step.done ? 'border-emerald-300' : 'border-slate-200',
                 )}
               >
                 <span
                   className={cn(
-                    'tabular-nums text-xs font-mono font-bold rounded-lg px-2 py-1 shrink-0',
+                    'tabular-nums text-xs font-mono font-bold rounded-md px-2 py-1 shrink-0',
                     step.done
                       ? 'bg-emerald-50 text-emerald-700'
                       : 'bg-slate-100 text-[#1E3A8A]',
@@ -191,7 +191,7 @@ export function RegisterSchoolPage() {
 
         {/* Right Form Card */}
         <div className="lg:col-span-7">
-          <Card className="rounded-2xl shadow-sm">
+          <Card>
             <CardHeader>
               <CardTitle className="text-xl">Platform Authorization &amp; School Details</CardTitle>
               <CardDescription>

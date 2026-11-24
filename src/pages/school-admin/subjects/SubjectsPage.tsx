@@ -166,12 +166,11 @@ export function SubjectsPage() {
                       {sub.assigned_teachers_count ?? 0}
                     </TableCell>
                     <TableCell>
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize text-slate-700">
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${
-                            sub.status === 'active' ? 'bg-emerald-600' : 'bg-slate-400'
-                          }`}
-                        />
+                      <span
+                        className={`text-xs font-semibold capitalize ${
+                          sub.status === 'active' ? 'text-emerald-700' : 'text-slate-500'
+                        }`}
+                      >
                         {sub.status}
                       </span>
                     </TableCell>

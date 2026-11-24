@@ -16,16 +16,16 @@ import { PortalShell, type PortalNavItem } from '../components/layout/PortalShel
 import { useAuth } from '../context/AuthContext.tsx';
 
 const STUDENT_NAV: PortalNavItem[] = [
-  { to: '/dashboard/student', label: 'Student Portal', icon: GraduationCap, end: true },
-  { to: '/dashboard/student/id-card', label: 'Digital ID Card', icon: IdCard },
-  { to: '/dashboard/student/attendance', label: 'My Attendance', icon: ClipboardCheck },
-  { to: '/dashboard/student/results', label: 'Published Results', icon: Award },
-  { to: '/dashboard/student/report-cards', label: 'Report Cards', icon: FileText },
-  { to: '/dashboard/student/history', label: 'Academic History', icon: History },
-  { to: '/dashboard/student/term', label: 'Current Term', icon: CalendarDays },
-  { to: '/dashboard/student/files', label: 'Profile & Files', icon: FolderLock },
-  { to: '/dashboard/student/notifications', label: 'Notifications', icon: Bell },
-  { to: '/dashboard/student/account', label: 'Account & Security', icon: Shield },
+  { section: 'Campus Identity', to: '/dashboard/student', label: 'Student Portal', icon: GraduationCap, end: true },
+  { section: 'Campus Identity', to: '/dashboard/student/id-card', label: 'Digital ID Card', icon: IdCard },
+  { section: 'Campus Identity', to: '/dashboard/student/attendance', label: 'My Attendance', icon: ClipboardCheck },
+  { section: 'Campus Identity', to: '/dashboard/student/term', label: 'Current Term', icon: CalendarDays },
+  { section: 'Academic Record', to: '/dashboard/student/results', label: 'Published Results', icon: Award },
+  { section: 'Academic Record', to: '/dashboard/student/report-cards', label: 'Report Cards', icon: FileText },
+  { section: 'Academic Record', to: '/dashboard/student/history', label: 'Academic History', icon: History },
+  { section: 'Account & Updates', to: '/dashboard/student/files', label: 'Profile & Files', icon: FolderLock },
+  { section: 'Account & Updates', to: '/dashboard/student/notifications', label: 'Notifications', icon: Bell },
+  { section: 'Account & Updates', to: '/dashboard/student/account', label: 'Account & Security', icon: Shield },
 ];
 
 export function StudentLayout() {

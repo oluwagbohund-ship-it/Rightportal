@@ -157,12 +157,11 @@ export function ParentsPage() {
                         {p.wards_count ?? 0} student(s)
                       </TableCell>
                       <TableCell>
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize text-slate-700">
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              p.status === 'active' ? 'bg-emerald-600' : 'bg-red-600'
-                            }`}
-                          />
+                        <span
+                          className={`text-xs font-semibold capitalize ${
+                            p.status === 'active' ? 'text-emerald-700' : 'text-red-700'
+                          }`}
+                        >
                           {p.status}
                         </span>
                       </TableCell>

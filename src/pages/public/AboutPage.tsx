@@ -75,11 +75,11 @@ export function AboutPage() {
         <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
           <div className="grid gap-10 lg:grid-cols-12 lg:items-stretch">
             <div className="lg:col-span-6 space-y-6 flex flex-col justify-center">
-              <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
+              <p className="text-xs font-semibold tracking-tight text-[#2563EB]">
                 About Dave Timi EdTech Systems
               </p>
               <h1
-                className="text-3xl sm:text-5xl font-bold tracking-tight text-[#0F172A] leading-[1.1]"
+                className="font-display text-3xl sm:text-5xl font-bold tracking-tight text-[#0F172A] leading-[1.08]"
                 style={{ textWrap: 'balance' }}
               >
                 Engineering dependable software infrastructure for schools.
@@ -97,7 +97,7 @@ export function AboutPage() {
                 </Button>
                 <a
                   href="/features.html"
-                  className="elastic-interactive inline-flex h-11 items-center rounded-lg border border-slate-300 bg-white px-5 text-sm font-medium text-[#0F172A] hover:bg-slate-50"
+                  className="inline-flex h-11 items-center rounded-lg border border-slate-300 bg-white px-5 text-sm font-medium text-[#0F172A] hover:bg-slate-50 transition-colors"
                 >
                   Explore What We Offer
                 </a>
@@ -109,14 +109,14 @@ export function AboutPage() {
                 src={PUBLIC_MEDIA.aboutStudioImg}
                 alt="Institutional software engineering and school architecture team studio"
                 fallbackTitle="Dave Timi EdTech Systems Studio"
-                className="w-full min-h-[320px] lg:h-full shadow-lg"
+                className="w-full min-h-[320px] lg:h-full border border-slate-200"
               >
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/65 via-transparent to-transparent pointer-events-none" />
                 <div className="absolute bottom-5 left-5 right-5 text-white">
                   <p className="text-xs font-medium text-blue-200">
                     Architect &amp; Founder
                   </p>
-                  <p className="text-base font-semibold">
+                  <p className="font-display text-base font-semibold">
                     David Oluwagbohun · Build • Innovate • Transform
                   </p>
                 </div>
@@ -130,10 +130,10 @@ export function AboutPage() {
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 space-y-10">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2 max-w-xl">
-            <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
+            <p className="text-xs font-semibold tracking-tight text-[#2563EB]">
               Our Three Principles
             </p>
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#0F172A]">
+            <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#0F172A]">
               Designed for trust from the first login.
             </h2>
           </div>

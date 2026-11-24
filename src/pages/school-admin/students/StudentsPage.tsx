@@ -105,11 +105,11 @@ export function StudentsPage() {
     }
   };
 
-  const dotColor = (status: string) => {
-    if (status === 'active') return 'bg-emerald-600';
-    if (status === 'graduated') return 'bg-[#2563EB]';
-    if (status === 'suspended') return 'bg-amber-600';
-    return 'bg-red-600';
+  const statusTextColor = (status: string) => {
+    if (status === 'active') return 'text-emerald-700';
+    if (status === 'graduated') return 'text-[#1E3A8A]';
+    if (status === 'suspended') return 'text-amber-700';
+    return 'text-red-700';
   };
 
   return (
@@ -260,8 +260,7 @@ export function StudentsPage() {
                         {st.guardians_count ?? 0} linked
                       </TableCell>
                       <TableCell>
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize text-slate-700">
-                          <span className={`h-1.5 w-1.5 rounded-full ${dotColor(st.status)}`} />
+                        <span className={`text-xs font-semibold capitalize ${statusTextColor(st.status)}`}>
                           {st.status}
                         </span>
                       </TableCell>

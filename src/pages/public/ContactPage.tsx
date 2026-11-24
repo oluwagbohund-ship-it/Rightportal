@@ -52,11 +52,11 @@ export function ContactPage() {
       <div className="grid gap-10 lg:grid-cols-12 lg:items-stretch">
         <div className="lg:col-span-5 flex flex-col justify-between gap-6">
           <div className="space-y-4">
-            <p className="text-xs font-semibold tracking-wider text-[#2563EB]">
+            <p className="text-xs font-semibold tracking-tight text-[#2563EB]">
               Contact Dave Timi EdTech Systems
             </p>
             <h1
-              className="text-3xl sm:text-4xl font-bold tracking-tight text-[#0F172A]"
+              className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-[#0F172A] leading-tight"
               style={{ textWrap: 'balance' }}
             >
               Connect with our engineering and onboarding team.
@@ -70,7 +70,7 @@ export function ContactPage() {
             src={PUBLIC_MEDIA.campusHubImg}
             alt="Modern school administrative hub supporting school staff and learners"
             fallbackTitle="Dave Timi EdTech Onboarding Team"
-            className="h-60 shadow-md"
+            className="h-60 border border-slate-200"
           >
             <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-slate-950/15 to-transparent pointer-events-none" />
             <div className="absolute bottom-4 left-4 right-4 text-white text-xs space-y-0.5">
@@ -81,7 +81,7 @@ export function ContactPage() {
         </div>
 
         <div className="lg:col-span-7">
-          <Card className="elastic-card h-full rounded-2xl shadow-sm">
+          <Card className="h-full">
             <CardHeader>
               <CardTitle className="text-xl">Institutional Inquiry</CardTitle>
               <CardDescription>
