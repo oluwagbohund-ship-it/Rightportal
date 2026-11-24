@@ -11,6 +11,7 @@ import {
   getOrCreateIdCardMasterSecret,
   issueDigitalIdCard,
 } from './id-card-helpers.ts';
+import { renderStudentIdCardPngBuffer } from './id-card-renderer.ts';
 import { allocateUniqueAdmissionNumber } from './school-helpers.ts';
 import { generateOpaqueToken, hashPassword, sha256Hex, verifyPassword } from './security.ts';
 import type { AuthEnvironment, RoleCode } from './types.ts';
@@ -1299,6 +1300,51 @@ async function handleFeesAction(chatId: string, link: TelegramLinkRow): Promise<
 }
 
 async function handleIdCardAction(chatId: string, link: TelegramLinkRow): Promise<void> {
+  const db = getDb();
+
+  if (link.role === 'parent' && link.profile_id) {
+    const wards = db
+      .prepare(`
+        SELECT s.id, s.school_id, s.first_name, s.last_name, s.admission_number
+        FROM student_guardians sg
+        INNER JOIN students s ON s.id = sg.student_id
+        WHERE sg.parent_id = ?
+        ORDER BY s.first_name ASC
+      `)
+      .all(link.profile_id) as Array<{
+      id: string;
+      school_id: string;
+      first_name: string;
+      last_name: string;
+      admission_number: string;
+    }>;
+
+    if (wards.length === 0) {
+      await sendTelegramMessage(chatId, `🆔 No wards are linked to your parent profile yet.`, {
+        inlineKeyboard: [[{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]],
+      });
+      return;
+    }
+
+    if (wards.length === 1) {
+      await sendStudentIdCardPhotoById(chatId, wards[0].id, wards[0].school_id, false);
+      return;
+    }
+
+    const keyboard: TelegramInlineButton[][] = wards.slice(0, 8).map((w) => [
+      {
+        text: `🆔 ${w.first_name} ${w.last_name} (${w.admission_number})`,
+        callback_data: `menu:view_id:${w.id}`,
+      },
+    ]);
+    keyboard.push([{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]);
+
+    await sendTelegramMessage(chatId, `🆔 *Ward Digital ID Cards*\n\nSelect a ward to receive their Digital Student ID Card:`, {
+      inlineKeyboard: keyboard,
+    });
+    return;
+  }
+
   if (link.role !== 'student' || !link.profile_id) {
     await sendTelegramMessage(chatId, `🆔 Digital Student ID cards are issued for enrolled students.`, {
       inlineKeyboard: [[{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]],
@@ -1306,13 +1352,12 @@ async function handleIdCardAction(chatId: string, link: TelegramLinkRow): Promis
     return;
   }
 
-  const db = getDb();
   const card = db
     .prepare(`
       SELECT id, card_number, qr_token_encrypted, status, expires_at
       FROM student_id_cards
       WHERE student_id = ?
-      ORDER BY created_at DESC
+      ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END ASC, created_at DESC, rowid DESC
       LIMIT 1
     `)
     .get(link.profile_id) as
@@ -1326,9 +1371,16 @@ async function handleIdCardAction(chatId: string, link: TelegramLinkRow): Promis
     | undefined;
 
   const student = db
-    .prepare(`SELECT first_name, last_name, admission_number FROM students WHERE id = ?`)
+    .prepare(`SELECT id, school_id, first_name, last_name, admission_number, photo_file_id FROM students WHERE id = ?`)
     .get(link.profile_id) as
-    | { first_name: string; last_name: string; admission_number: string }
+    | {
+        id: string;
+        school_id: string;
+        first_name: string;
+        last_name: string;
+        admission_number: string;
+        photo_file_id: string | null;
+      }
     | undefined;
 
   if (!card || !student) {
@@ -1349,18 +1401,30 @@ async function handleIdCardAction(chatId: string, link: TelegramLinkRow): Promis
     `✅ *Status:* ${card.status.toUpperCase()}\n` +
     `📅 *Expires:* \`${card.expires_at.slice(0, 10)}\``;
 
-  if (rawQrToken) {
-    try {
-      const pngBuffer = await QRCode.toBuffer(rawQrToken, {
-        width: 360,
-        margin: 2,
-      });
-      const sentPhoto = await sendTelegramPhoto(chatId, pngBuffer, caption, {
+  if (card.status === 'active') {
+    const cardBuffer = await renderStudentIdCardPngBuffer(student.id, student.school_id);
+    if (cardBuffer) {
+      const sentCard = await sendTelegramPhoto(chatId, cardBuffer, caption, {
         inlineKeyboard: [[{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]],
+        filename: 'student-id-card.png',
       });
-      if (sentPhoto) return;
-    } catch {
-      // fallback to text message
+      if (sentCard) return;
+    }
+
+    if (rawQrToken) {
+      try {
+        const pngBuffer = await QRCode.toBuffer(rawQrToken, {
+          width: 360,
+          margin: 2,
+        });
+        const sentPhoto = await sendTelegramPhoto(chatId, pngBuffer, caption, {
+          inlineKeyboard: [[{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]],
+          filename: 'student-id-qr.png',
+        });
+        if (sentPhoto) return;
+      } catch {
+        // fallback to text message
+      }
     }
   }
 
@@ -2122,11 +2186,19 @@ async function executeStudentRegistration(
     ];
 
     try {
-      const qrPngBuffer = await QRCode.toBuffer(idCard.rawQrToken, { width: 360, margin: 2 });
-      await sendTelegramPhoto(chatId, qrPngBuffer, caption, {
-        inlineKeyboard,
-        filename: 'student-id-qr.png',
-      });
+      const cardBuffer = await renderStudentIdCardPngBuffer(studentId, schoolId);
+      if (cardBuffer) {
+        await sendTelegramPhoto(chatId, cardBuffer, caption, {
+          inlineKeyboard,
+          filename: 'student-id-card.png',
+        });
+      } else {
+        const qrPngBuffer = await QRCode.toBuffer(idCard.rawQrToken, { width: 360, margin: 2 });
+        await sendTelegramPhoto(chatId, qrPngBuffer, caption, {
+          inlineKeyboard,
+          filename: 'student-id-qr.png',
+        });
+      }
     } catch {
       await sendTelegramMessage(chatId, caption, { inlineKeyboard });
     }
@@ -2730,6 +2802,7 @@ async function sendStudentIdCardPhotoById(
   chatId: string,
   studentId: string,
   schoolId: string,
+  includeAdminControls = true,
 ): Promise<void> {
   const db = getDb();
   const student = db
@@ -2744,7 +2817,9 @@ async function sendStudentIdCardPhotoById(
   }
 
   let card = db
-    .prepare("SELECT id, card_number, qr_token_encrypted, status, expires_at FROM student_id_cards WHERE student_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1")
+    .prepare(
+      "SELECT id, card_number, qr_token_encrypted, status, expires_at FROM student_id_cards WHERE student_id = ? AND status = 'active' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+    )
     .get(studentId) as
     | { id: string; card_number: string; qr_token_encrypted: string; status: string; expires_at: string }
     | undefined;
@@ -2781,17 +2856,29 @@ async function sendStudentIdCardPhotoById(
     `📅 *Valid Until:* \`${card.expires_at.slice(0, 10)}\`\n` +
     `📸 *Passport:* ${student.photo_file_id ? '✅ Attached' : 'None'}`;
 
-  const pngBuffer = await QRCode.toBuffer(rawQrToken, { width: 360, margin: 2 });
-  await sendTelegramPhoto(chatId, pngBuffer, caption, {
-    inlineKeyboard: [
-      [
-        { text: '➕ Register Student', callback_data: 'menu:reg_student' },
-        { text: '🎓 All Students', callback_data: 'menu:students' },
-      ],
-      [{ text: '⬅️ Admin Menu', callback_data: 'menu:home' }],
-    ],
-    filename: 'student-id-qr.png',
-  });
+  const inlineKeyboard: TelegramInlineButton[][] = includeAdminControls
+    ? [
+        [
+          { text: '➕ Register Student', callback_data: 'menu:reg_student' },
+          { text: '🎓 All Students', callback_data: 'menu:students' },
+        ],
+        [{ text: '⬅️ Admin Menu', callback_data: 'menu:home' }],
+      ]
+    : [[{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]];
+
+  const cardBuffer = await renderStudentIdCardPngBuffer(studentId, schoolId);
+  if (cardBuffer) {
+    await sendTelegramPhoto(chatId, cardBuffer, caption, {
+      inlineKeyboard,
+      filename: 'student-id-card.png',
+    });
+  } else {
+    const pngBuffer = await QRCode.toBuffer(rawQrToken, { width: 360, margin: 2 });
+    await sendTelegramPhoto(chatId, pngBuffer, caption, {
+      inlineKeyboard,
+      filename: 'student-id-qr.png',
+    });
+  }
 }
 
 async function dispatchUserMenuAction(
@@ -2928,12 +3015,34 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
       const studentId = data.slice('menu:view_id:'.length);
       const link = getTelegramLink(chatId);
       if (link) {
-        const school = resolveTargetSchool(link);
-        if (school) {
-          await sendStudentIdCardPhotoById(chatId, studentId, school.id);
+        if (canManageSchoolMembers(link)) {
+          const school = resolveTargetSchool(link);
+          if (school) {
+            await sendStudentIdCardPhotoById(chatId, studentId, school.id, true);
+            return;
+          }
+        } else if (link.role === 'student' && link.profile_id === studentId && link.school_id) {
+          await sendStudentIdCardPhotoById(chatId, studentId, link.school_id, false);
           return;
+        } else if (link.role === 'parent' && link.profile_id) {
+          const db = getDb();
+          const ward = db
+            .prepare(`
+              SELECT s.id, s.school_id
+              FROM student_guardians sg
+              INNER JOIN students s ON s.id = sg.student_id
+              WHERE sg.parent_id = ? AND sg.student_id = ?
+              LIMIT 1
+            `)
+            .get(link.profile_id, studentId) as { id: string; school_id: string } | undefined;
+          if (ward) {
+            await sendStudentIdCardPhotoById(chatId, ward.id, ward.school_id, false);
+            return;
+          }
         }
       }
+      await sendTelegramMessage(chatId, `⚠️ You are not authorized to view that Digital ID card.`);
+      return;
     }
 
     if (data.startsWith('reg_stu_cls:')) {

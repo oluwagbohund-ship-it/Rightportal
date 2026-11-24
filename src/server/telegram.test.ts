@@ -12,6 +12,7 @@ process.env.SQLITE_DB_PATH = path.join(tmpDir, 'test.sqlite');
 process.env.SQLITE_BACKUP_DIR = path.join(tmpDir, 'backups');
 process.env.FILE_STORAGE_DIR = path.join(tmpDir, 'storage');
 
+import { createCanvas } from 'canvas';
 const { closeDb, getDb, verifyDatabaseIntegrity } = await import('../db/client.ts');
 const { securityHeadersMiddleware } = await import('./middleware.ts');
 const { hashPassword, sha256Hex } = await import('./security.ts');
@@ -20,6 +21,7 @@ const {
   generateIdCardQrToken,
   getOrCreateIdCardMasterSecret,
 } = await import('./id-card-helpers.ts');
+const { renderStudentIdCardPngBuffer } = await import('./id-card-renderer.ts');
 const { authRouter } = await import('./routes/auth.ts');
 const { ownerRouter } = await import('./routes/owner.ts');
 const telegramRouter = (await import('./routes/telegram.ts')).default;
@@ -34,6 +36,8 @@ interface SentTelegramCall {
   text: string;
   inlineKeyboard?: unknown;
   isPhoto?: boolean;
+  photoFilename?: string;
+  photoBuffer?: Buffer;
 }
 
 const sentCalls: SentTelegramCall[] = [];
@@ -105,18 +109,18 @@ before(async () => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     if (url.startsWith('https://api.telegram.org/')) {
       if (url.includes('/file/bot')) {
-        const sampleJpeg = Buffer.from([
-          0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
-          0x00, 0x48, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
-          0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0a, 0x0c, 0x14, 0x0d, 0x0c, 0x0b, 0x0b, 0x0c, 0x19, 0x12,
-          0x13, 0x0f, 0x14, 0x1d, 0x1a, 0x1f, 0x1e, 0x1d, 0x1a, 0x1c, 0x1c, 0x20, 0x24, 0x2e, 0x27, 0x20,
-          0x22, 0x2c, 0x23, 0x1c, 0x1c, 0x28, 0x37, 0x29, 0x2c, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1f, 0x27,
-          0x39, 0x3d, 0x38, 0x32, 0x3c, 0x2e, 0x33, 0x34, 0x32, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01,
-          0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01,
-          0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
-          0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f,
-          0x00, 0xbf, 0x00, 0xff, 0xd9,
-        ]);
+        const c = createCanvas(160, 200);
+        const cx = c.getContext('2d');
+        cx.fillStyle = '#DBEAFE';
+        cx.fillRect(0, 0, 160, 200);
+        cx.fillStyle = '#1E3A8A';
+        cx.beginPath();
+        cx.arc(80, 72, 34, 0, Math.PI * 2);
+        cx.fill();
+        cx.beginPath();
+        cx.arc(80, 178, 58, Math.PI, 0);
+        cx.fill();
+        const sampleJpeg = new Uint8Array(c.toBuffer('image/jpeg'));
         return new Response(sampleJpeg, {
           status: 200,
           headers: { 'Content-Type': 'image/jpeg' },
@@ -191,12 +195,21 @@ before(async () => {
         });
       } else if (method === 'sendPhoto' && init?.body instanceof FormData) {
         const kbRaw = init.body.get('reply_markup');
+        const photoField = init.body.get('photo');
+        let photoFilename: string | undefined;
+        let photoBuffer: Buffer | undefined;
+        if (photoField && typeof photoField === 'object' && 'arrayBuffer' in photoField) {
+          photoFilename = (photoField as File).name;
+          photoBuffer = Buffer.from(await (photoField as Blob).arrayBuffer());
+        }
         sentCalls.push({
           method,
           chatId: String(init.body.get('chat_id') || ''),
           text: String(init.body.get('caption') || ''),
           inlineKeyboard: typeof kbRaw === 'string' ? JSON.parse(kbRaw)?.inline_keyboard : undefined,
           isPhoto: true,
+          photoFilename,
+          photoBuffer,
         });
       }
       return new Response(JSON.stringify({ ok: true, result: { message_id: sentCalls.length } }), {
@@ -426,7 +439,14 @@ test('All 5 user groups can link, view role actions, and sign in via 1-click /au
     { message: { chat: { id: 20001 }, text: '/idcard', from: { username: 'chidi_stu' } } },
     baseUrl,
   );
-  assert.ok(sentCalls.some((c) => c.chatId === '20001' && c.isPhoto && c.text.includes('DT-IDC-2026-0001')));
+  const studentIdCardCall = sentCalls.find(
+    (c) => c.chatId === '20001' && c.isPhoto && c.text.includes('DT-IDC-2026-0001'),
+  );
+  assert.ok(studentIdCardCall);
+  assert.equal(studentIdCardCall.photoFilename, 'student-id-card.png');
+  assert.ok(studentIdCardCall.photoBuffer && studentIdCardCall.photoBuffer.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
+  assert.equal(studentIdCardCall.photoBuffer.readUInt32BE(16), 856);
+  assert.equal(studentIdCardCall.photoBuffer.readUInt32BE(20), 540);
 
   // 2. Student triggers /login and exchanges magic link for real auth_sessions cookie + redirect
   sentCalls.length = 0;
@@ -706,7 +726,9 @@ test('School Admin can register students (with photo & auto account), teachers, 
   );
 
   const regPhotoCall = sentCalls.find((c) => c.chatId === '20004' && c.isPhoto && c.text.includes('Amaka Okon'));
-  assert.ok(regPhotoCall, 'Telegram Bot must send Digital ID QR pass with confirmation caption');
+  assert.ok(regPhotoCall, 'Telegram Bot must send Digital ID card pass with confirmation caption');
+  assert.equal(regPhotoCall.photoFilename, 'student-id-card.png');
+  assert.ok(regPhotoCall.photoBuffer && regPhotoCall.photoBuffer.readUInt32BE(16) === 856 && regPhotoCall.photoBuffer.readUInt32BE(20) === 540);
   assert.ok(regPhotoCall.text.includes('Student Successfully Registered & Provisioned'));
   assert.ok(regPhotoCall.text.includes('Uploaded & Verified'));
   assert.ok(regPhotoCall.text.includes('Portal Login:'));
@@ -976,7 +998,28 @@ test('School Admin can register students (with photo & auto account), teachers, 
   );
   const viewIdPhotoCall = sentCalls.find((c) => c.chatId === '20004' && c.isPhoto && c.text.includes('Amaka Okon'));
   assert.ok(viewIdPhotoCall, 'Admin can view and retrieve any student Digital ID Card photo');
+  assert.equal(viewIdPhotoCall.photoFilename, 'student-id-card.png');
+  assert.ok(viewIdPhotoCall.photoBuffer && viewIdPhotoCall.photoBuffer.readUInt32BE(16) === 856 && viewIdPhotoCall.photoBuffer.readUInt32BE(20) === 540);
   assert.ok(viewIdPhotoCall.text.includes(amakaRow.admission_number));
+
+  // 7. Direct renderer verification with & without photo
+  const amakaCardPng = await renderStudentIdCardPngBuffer(amakaRow.id, ids.schoolId);
+  assert.ok(amakaCardPng && amakaCardPng.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
+  assert.equal(amakaCardPng.readUInt32BE(16), 856);
+  assert.equal(amakaCardPng.readUInt32BE(20), 540);
+
+  // David also received a photo via /uploadphoto above; verify his full ID card renders cleanly
+  const davidCardPng = await renderStudentIdCardPngBuffer(davidRow.id, ids.schoolId);
+  assert.ok(davidCardPng && davidCardPng.readUInt32BE(16) === 856 && davidCardPng.readUInt32BE(20) === 540);
+
+  // Parent (/idcard) receives ward ID card selector or direct card
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20002 }, text: '/idcard', from: { username: 'ngozi_par' } } },
+    baseUrl,
+  );
+  const parentCardCall = sentCalls.find((c) => c.chatId === '20002' && c.isPhoto && c.photoFilename === 'student-id-card.png');
+  assert.ok(parentCardCall, 'Linked parent receives full Digital Student ID Card PNG for their single ward');
 });
 
 
