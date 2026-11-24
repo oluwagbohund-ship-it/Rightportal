@@ -6,6 +6,7 @@
       "name": "react-example",
       "dependencies": {
         "@google/genai": "^3.6.1",
+        "@resvg/resvg-wasm": "^2.6.2",
         "@tailwindcss/vite": "^4.3.3",
         "@types/nodemailer": "^8.0.2",
         "@types/qrcode": "^1.5.6",
@@ -23,6 +24,7 @@
         "react-dom": "^19.0.1",
         "react-router-dom": "^7.18.6",
         "tailwind-merge": "^3.7.1",
+        "tsx": "^4.21.0",
         "vite": "^8.3.0",
         "zod": "^4.6.7",
       },
@@ -33,7 +35,6 @@
         "@types/react-dom": "^19.3.0",
         "autoprefixer": "^10.4.21",
         "tailwindcss": "^4.3.3",
-        "tsx": "^4.21.0",
         "typescript": "^7.0.2",
       },
     },
@@ -130,6 +131,8 @@
     "@protobufjs/pool": ["@protobufjs/pool@1.1.0", "", {}, "sha512-0kELaGSIDBKvcgS4zkjz1PeddatrjYcmMWOlAuAPwAeccUrPHdUqo/J6LiymHHEiJT5NrF1UVwxY14f+fy4WQw=="],
 
     "@protobufjs/utf8": ["@protobufjs/utf8@1.1.2", "", {}, "sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug=="],
+
+    "@resvg/resvg-wasm": ["@resvg/resvg-wasm@2.6.2", "", {}, "sha512-FqALmHI8D4o6lk/LRWDnhw95z5eO+eAa6ORjVg09YRR7BkcM6oPHU9uyC0gtQG5vpFLvgpeU4+zEAz2H8APHNw=="],
 
     "@rolldown/binding-android-arm-eabi": ["@rolldown/binding-android-arm-eabi@1.2.19", "", { "os": "android", "cpu": "arm" }, "sha512-e+Ebe0WT+9tbXmNKPIiC8YrWAHYwug3m6i4p3rZGGulfZri1jtI4HslT+OZnFf/OIHowWF71DTlHwXBP2SiA7A=="],
 

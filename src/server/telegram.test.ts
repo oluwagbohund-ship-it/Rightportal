@@ -12,7 +12,6 @@ process.env.SQLITE_DB_PATH = path.join(tmpDir, 'test.sqlite');
 process.env.SQLITE_BACKUP_DIR = path.join(tmpDir, 'backups');
 process.env.FILE_STORAGE_DIR = path.join(tmpDir, 'storage');
 
-import { createCanvas } from 'canvas';
 const { closeDb, getDb, verifyDatabaseIntegrity } = await import('../db/client.ts');
 const { securityHeadersMiddleware } = await import('./middleware.ts');
 const { hashPassword, sha256Hex } = await import('./security.ts');
@@ -21,7 +20,7 @@ const {
   generateIdCardQrToken,
   getOrCreateIdCardMasterSecret,
 } = await import('./id-card-helpers.ts');
-const { renderStudentIdCardPngBuffer } = await import('./id-card-renderer.ts');
+const { renderStudentIdCardPngBuffer, renderSvgToPngBuffer } = await import('./id-card-renderer.ts');
 const { authRouter } = await import('./routes/auth.ts');
 const { ownerRouter } = await import('./routes/owner.ts');
 const telegramRouter = (await import('./routes/telegram.ts')).default;
@@ -109,21 +108,16 @@ before(async () => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     if (url.startsWith('https://api.telegram.org/')) {
       if (url.includes('/file/bot')) {
-        const c = createCanvas(160, 200);
-        const cx = c.getContext('2d');
-        cx.fillStyle = '#DBEAFE';
-        cx.fillRect(0, 0, 160, 200);
-        cx.fillStyle = '#1E3A8A';
-        cx.beginPath();
-        cx.arc(80, 72, 34, 0, Math.PI * 2);
-        cx.fill();
-        cx.beginPath();
-        cx.arc(80, 178, 58, Math.PI, 0);
-        cx.fill();
-        const sampleJpeg = new Uint8Array(c.toBuffer('image/jpeg'));
-        return new Response(sampleJpeg, {
+        const samplePng = await renderSvgToPngBuffer(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="200" viewBox="0 0 160 200">
+            <rect width="160" height="200" fill="#DBEAFE"/>
+            <circle cx="80" cy="72" r="34" fill="#1E3A8A"/>
+            <path d="M22,190 A58,58 0 0,1 138,190 Z" fill="#1E3A8A"/>
+          </svg>`,
+        );
+        return new Response(new Uint8Array(samplePng), {
           status: 200,
-          headers: { 'Content-Type': 'image/jpeg' },
+          headers: { 'Content-Type': 'image/png' },
         });
       }
       const methodMatch = url.match(/\/bot[^/]+\/([^?]+)/);
@@ -179,7 +173,7 @@ before(async () => {
               file_id: fileId,
               file_unique_id: `uniq_${fileId}`,
               file_size: 150,
-              file_path: `photos/${fileId}.jpg`,
+              file_path: `photos/${fileId}.png`,
             },
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
