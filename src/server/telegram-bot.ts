@@ -1,13 +1,18 @@
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { getDb } from '../db/client.ts';
+import { recordAuditLog } from './audit.ts';
+import { saveValidatedFile } from './file-storage.ts';
 import {
+  allocateNextCardNumber,
   decryptIdCardToken,
   evaluateIdCardValidity,
   extractIdCardTokenFromScan,
   getOrCreateIdCardMasterSecret,
+  issueDigitalIdCard,
 } from './id-card-helpers.ts';
-import { generateOpaqueToken, sha256Hex, verifyPassword } from './security.ts';
+import { allocateUniqueAdmissionNumber } from './school-helpers.ts';
+import { generateOpaqueToken, hashPassword, sha256Hex, verifyPassword } from './security.ts';
 import type { AuthEnvironment, RoleCode } from './types.ts';
 
 export interface TelegramInlineButton {
@@ -184,7 +189,7 @@ export async function sendTelegramPhoto(
   chatId: string | number,
   pngBuffer: Buffer,
   caption: string,
-  options: TelegramSendOptions = {},
+  options: TelegramSendOptions & { filename?: string } = {},
 ): Promise<boolean> {
   const token = getBotToken();
   if (!token) {
@@ -201,8 +206,10 @@ export async function sendTelegramPhoto(
         JSON.stringify({ inline_keyboard: options.inlineKeyboard }),
       );
     }
-    const blob = new Blob([new Uint8Array(pngBuffer)], { type: 'image/png' });
-    formData.append('photo', blob, 'student-id-qr.png');
+    const filename = options.filename || 'student-id-qr.png';
+    const mimeType = filename.endsWith('.jpg') || filename.endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
+    const blob = new Blob([new Uint8Array(pngBuffer)], { type: mimeType });
+    formData.append('photo', blob, filename);
 
     const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
       method: 'POST',
@@ -214,6 +221,63 @@ export async function sendTelegramPhoto(
     console.error('[TelegramBot] Failed to send photo:', err);
     return false;
   }
+}
+
+export async function downloadTelegramFile(fileId: string): Promise<{
+  buffer: Buffer;
+  mimeType: string;
+  originalName: string;
+} | null> {
+  const token = getBotToken();
+  if (!token) return null;
+  try {
+    const metaRes = await fetch(
+      `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`,
+    );
+    const meta = (await metaRes.json()) as {
+      ok: boolean;
+      result?: { file_path?: string };
+    };
+    if (!meta.ok || !meta.result?.file_path) return null;
+
+    const filePath = meta.result.file_path;
+    const downloadRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+    if (!downloadRes.ok) return null;
+
+    const arrayBuffer = await downloadRes.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const ext = filePath.split('.').pop()?.toLowerCase() || 'jpg';
+    const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    const originalName = filePath.split('/').pop() || `telegram_${fileId}.${ext}`;
+    return { buffer, mimeType, originalName };
+  } catch (err) {
+    console.error('[TelegramBot] Failed to download file from Telegram:', err);
+    return null;
+  }
+}
+
+export function extractPhotoOrImageDocument(message: any): { fileId: string; fileName?: string } | null {
+  if (Array.isArray(message?.photo) && message.photo.length > 0) {
+    const best = message.photo[message.photo.length - 1];
+    if (best?.file_id) {
+      return { fileId: String(best.file_id) };
+    }
+  }
+  if (message?.document?.file_id) {
+    const doc = message.document;
+    const mime = String(doc.mime_type || '').toLowerCase();
+    const name = String(doc.file_name || '').toLowerCase();
+    if (
+      mime.startsWith('image/') ||
+      name.endsWith('.png') ||
+      name.endsWith('.jpg') ||
+      name.endsWith('.jpeg') ||
+      name.endsWith('.webp')
+    ) {
+      return { fileId: String(doc.file_id), fileName: doc.file_name };
+    }
+  }
+  return null;
 }
 
 async function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
@@ -782,8 +846,20 @@ export function buildRoleMenuKeyboard(role: RoleCode): TelegramInlineButton[][] 
       return [
         [{ text: '🔑 Open School Admin Portal', callback_data: 'menu:login' }],
         [
+          { text: '➕ Register Student', callback_data: 'menu:reg_student' },
+          { text: '👨‍🏫 Register Teacher', callback_data: 'menu:reg_teacher' },
+        ],
+        [
+          { text: '👪 Register Parent', callback_data: 'menu:reg_parent' },
+          { text: '📸 Upload Photo', callback_data: 'menu:upload_photo' },
+        ],
+        [
+          { text: '🎓 Students', callback_data: 'menu:students' },
+          { text: '👨‍🏫 Teachers', callback_data: 'menu:teachers' },
+        ],
+        [
           { text: '📈 School Snapshot', callback_data: 'menu:overview' },
-          { text: '📝 Pending Admissions', callback_data: 'menu:admissions' },
+          { text: '📝 Admissions', callback_data: 'menu:admissions' },
         ],
         [
           { text: '💳 Finance Summary', callback_data: 'menu:finance' },
@@ -797,6 +873,10 @@ export function buildRoleMenuKeyboard(role: RoleCode): TelegramInlineButton[][] 
     case 'workforce_support':
       return [
         [{ text: '🔑 Open Owner Console', callback_data: 'menu:login' }],
+        [
+          { text: '➕ Register Student', callback_data: 'menu:reg_student' },
+          { text: '👨‍🏫 Register Teacher', callback_data: 'menu:reg_teacher' },
+        ],
         [
           { text: '🌐 Platform Overview', callback_data: 'menu:overview' },
           { text: '🏫 Schools Directory', callback_data: 'menu:schools' },
@@ -1660,6 +1740,1060 @@ async function handleNoticesAction(chatId: string, link: TelegramLinkRow): Promi
   });
 }
 
+function canManageSchoolMembers(link: TelegramLinkRow): boolean {
+  return (
+    link.role === 'school_admin' ||
+    link.role === 'platform_owner' ||
+    link.role === 'workforce_admin'
+  );
+}
+
+function resolveTargetSchool(link: TelegramLinkRow): { id: string; name: string; slug: string; code: string } | null {
+  const db = getDb();
+  if (link.school_id) {
+    const s = db
+      .prepare('SELECT id, name, slug, code FROM schools WHERE id = ?')
+      .get(link.school_id) as { id: string; name: string; slug: string; code: string } | undefined;
+    if (s) return s;
+  }
+  if (link.role === 'platform_owner' || link.role === 'workforce_admin') {
+    const s = db
+      .prepare("SELECT id, name, slug, code FROM schools WHERE status != 'suspended' ORDER BY created_at ASC LIMIT 1")
+      .get() as { id: string; name: string; slug: string; code: string } | undefined;
+    if (s) return s;
+  }
+  return null;
+}
+
+function allocateStaffIdNumber(schoolId: string): string {
+  const db = getDb();
+  const prefix = 'TCH-';
+  const rows = db
+    .prepare('SELECT staff_id_number FROM teachers WHERE school_id = ? AND staff_id_number LIKE ?')
+    .all(schoolId, `${prefix}%`) as Array<{ staff_id_number: string }>;
+  let maxSeq = 0;
+  for (const r of rows) {
+    const num = parseInt(r.staff_id_number.replace(/\D/g, ''), 10);
+    if (Number.isFinite(num) && num > maxSeq) maxSeq = num;
+  }
+  return `TCH-${String(maxSeq + 1).padStart(4, '0')}`;
+}
+
+function generateSafeEmail(firstName: string, lastName: string, schoolSlug: string, prefix = 'stu'): string {
+  const cleanFirst = firstName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanLast = lastName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const rand = crypto.randomBytes(2).toString('hex');
+  const safeDomain = schoolSlug.toLowerCase().replace(/[^a-z0-9-]/g, '') || 'school';
+  return `${cleanFirst || prefix}.${cleanLast || 'user'}.${rand}@${safeDomain}.edu`;
+}
+
+function generateSafePassword(role = 'Student'): string {
+  const year = new Date().getFullYear();
+  const rand = crypto.randomInt(1000, 9999);
+  return `${role}#${year}${rand}`;
+}
+
+async function startStudentRegistration(
+  chatId: string,
+  link: TelegramLinkRow,
+  prefillName?: string,
+): Promise<void> {
+  if (!canManageSchoolMembers(link)) {
+    await sendTelegramMessage(
+      chatId,
+      `⚠️ *Permission Denied*: Only School Administrators can register students.`,
+      { inlineKeyboard: [[{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]] },
+    );
+    return;
+  }
+  const school = resolveTargetSchool(link);
+  if (!school) {
+    await sendTelegramMessage(chatId, `⚠️ No active school tenant found to register students.`);
+    return;
+  }
+
+  if (prefillName?.trim()) {
+    await promptStudentClassSelection(chatId, link, school, prefillName.trim());
+    return;
+  }
+
+  setChatState(chatId, 'reg_stu_name', {
+    schoolId: school.id,
+    schoolName: school.name,
+    schoolSlug: school.slug,
+    actorUserId: link.user_id,
+  });
+  await sendTelegramMessage(
+    chatId,
+    `🎓 *Register New Student — ${school.name}* (Step 1/5)\n\n` +
+      `Please enter the student's *Full Name* (e.g. \`Adaeze Chidinma Okafor\` or \`John Doe\`):\n` +
+      `_(Reply with /cancel at any time to abort.)_`,
+  );
+}
+
+async function promptStudentClassSelection(
+  chatId: string,
+  link: TelegramLinkRow,
+  school: { id: string; name: string; slug: string; code: string },
+  fullName: string,
+): Promise<void> {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  const firstName = parts[0] || 'Student';
+  const lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+  const middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : null;
+
+  const db = getDb();
+  const classes = db
+    .prepare("SELECT id, name FROM school_classes WHERE school_id = ? AND status = 'active' ORDER BY name ASC")
+    .all(school.id) as Array<{ id: string; name: string }>;
+
+  const payloadBase = {
+    schoolId: school.id,
+    schoolName: school.name,
+    schoolSlug: school.slug,
+    actorUserId: link.user_id,
+    fullName,
+    firstName,
+    middleName,
+    lastName,
+  };
+
+  if (classes.length === 0) {
+    setChatState(chatId, 'reg_stu_gender', {
+      ...payloadBase,
+      classId: null,
+      className: 'Unassigned',
+      armId: null,
+    });
+    await promptStudentGenderSelection(chatId, fullName);
+    return;
+  }
+
+  setChatState(chatId, 'reg_stu_class', payloadBase);
+
+  const keyboard: TelegramInlineButton[][] = [];
+  let currentRow: TelegramInlineButton[] = [];
+  for (const c of classes) {
+    currentRow.push({ text: `🏫 ${c.name}`, callback_data: `reg_stu_cls:${c.id}` });
+    if (currentRow.length === 2) {
+      keyboard.push(currentRow);
+      currentRow = [];
+    }
+  }
+  if (currentRow.length > 0) {
+    keyboard.push(currentRow);
+  }
+  keyboard.push([{ text: '🚫 Skip / Assign Class Later', callback_data: 'reg_stu_cls:skip' }]);
+  keyboard.push([{ text: '❌ Cancel Registration', callback_data: 'reg_action:cancel' }]);
+
+  await sendTelegramMessage(
+    chatId,
+    `🎓 *Register Student: ${fullName}* (Step 2/5)\n\n` +
+      `Select the assigned class level for this student:`,
+    { inlineKeyboard: keyboard },
+  );
+}
+
+async function promptStudentGenderSelection(chatId: string, fullName: string): Promise<void> {
+  await sendTelegramMessage(
+    chatId,
+    `🎓 *Register Student: ${fullName}* (Step 3/5)\n\nSelect the student's *gender*:`,
+    {
+      inlineKeyboard: [
+        [
+          { text: '👦 Male', callback_data: 'reg_stu_gen:male' },
+          { text: '👧 Female', callback_data: 'reg_stu_gen:female' },
+        ],
+        [{ text: '⚧ Other / Unspecified', callback_data: 'reg_stu_gen:other' }],
+        [{ text: '❌ Cancel Registration', callback_data: 'reg_action:cancel' }],
+      ],
+    },
+  );
+}
+
+async function promptStudentAccountSelection(chatId: string, fullName: string): Promise<void> {
+  await sendTelegramMessage(
+    chatId,
+    `🔐 *Portal Account & Credentials* (Step 4/5)\n\n` +
+      `Would you like to provision an active web portal account for *${fullName}*?\n` +
+      `Students use their credentials to check term results, CBT tests, and timetable.`,
+    {
+      inlineKeyboard: [
+        [{ text: '⚡ Auto-Generate Email & Password', callback_data: 'reg_stu_acc:auto' }],
+        [{ text: '✉️ Enter Custom Email', callback_data: 'reg_stu_acc:custom' }],
+        [{ text: '🚫 No Portal Account (Record Only)', callback_data: 'reg_stu_acc:none' }],
+        [{ text: '❌ Cancel Registration', callback_data: 'reg_action:cancel' }],
+      ],
+    },
+  );
+}
+
+async function promptStudentPhotoUpload(chatId: string, fullName: string): Promise<void> {
+  await sendTelegramMessage(
+    chatId,
+    `📷 *Student Passport / Profile Photo* (Step 5/5)\n\n` +
+      `📸 *Please send or upload the passport photo for ${fullName} now!*\n` +
+      `You can take a photo with your mobile camera or attach an image file.\n\n` +
+      `Or tap *Skip Photo* below to finalize registration immediately without a passport image.`,
+    {
+      inlineKeyboard: [
+        [{ text: '⏭️ Skip Photo & Finalize', callback_data: 'reg_stu_photo:skip' }],
+        [{ text: '❌ Cancel Registration', callback_data: 'reg_action:cancel' }],
+      ],
+    },
+  );
+}
+
+async function executeStudentRegistration(
+  chatId: string,
+  link: TelegramLinkRow,
+  payload: Record<string, unknown>,
+  photoDownload?: { buffer: Buffer; mimeType: string; originalName: string } | null,
+): Promise<void> {
+  const db = getDb();
+  const schoolId = String(payload.schoolId || link.school_id || '');
+  if (!schoolId) {
+    await sendTelegramMessage(chatId, `❌ Missing school tenant context.`);
+    clearChatState(chatId);
+    return;
+  }
+
+  const fullName = String(payload.fullName || 'Student');
+  const firstName = String(payload.firstName || 'Student');
+  const middleName = payload.middleName ? String(payload.middleName) : null;
+  const lastName = String(payload.lastName || 'Student');
+  const gender = String(payload.gender || 'other');
+  const classId = payload.classId ? String(payload.classId) : null;
+  const armId = payload.armId ? String(payload.armId) : null;
+  const className = String(payload.className || (classId ? 'Assigned' : 'Unassigned'));
+  const createLogin = Boolean(payload.createLogin);
+  const studentEmail = payload.studentEmail ? String(payload.studentEmail).toLowerCase().trim() : '';
+  const tempPassword = payload.tempPassword ? String(payload.tempPassword) : '';
+
+  const studentId = `stu_${crypto.randomUUID()}`;
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  let photoFileId: string | null = null;
+  if (photoDownload && photoDownload.buffer.length > 0) {
+    try {
+      const stored = saveValidatedFile({
+        schoolId,
+        uploadedByUserId: link.user_id,
+        category: 'student_profile_picture',
+        originalName: photoDownload.originalName || `${firstName}_${lastName}_passport.jpg`,
+        claimedMimeType: photoDownload.mimeType || 'image/jpeg',
+        contentBase64: photoDownload.buffer.toString('base64'),
+        visibility: 'private_tenant',
+      });
+      photoFileId = stored.id;
+    } catch (err) {
+      console.warn('[TelegramBot] Passport photo validation warning:', err);
+    }
+  }
+
+  let assignedAdmissionNumber = '';
+  let linkedUserId: string | null = null;
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    assignedAdmissionNumber = allocateUniqueAdmissionNumber(schoolId, todayIso);
+
+    if (createLogin && studentEmail && tempPassword) {
+      linkedUserId = `usr_${crypto.randomUUID()}`;
+      db.prepare(`
+        INSERT INTO users (id, email, full_name, password_hash, user_type, is_active)
+        VALUES (?, ?, ?, ?, 'school_member', 1)
+      `).run(linkedUserId, studentEmail, fullName, hashPassword(tempPassword));
+
+      db.prepare(`
+        INSERT INTO school_memberships (id, school_id, user_id, role_id, title, status)
+        VALUES (?, ?, ?, 'role_student', ?, 'active')
+      `).run(`mem_${crypto.randomUUID()}`, schoolId, linkedUserId, assignedAdmissionNumber);
+    }
+
+    const middleNameStr = middleName || '';
+    const rawGender = String(payload.gender || 'other').toLowerCase();
+    const formattedGender = rawGender === 'female' ? 'Female' : rawGender === 'male' ? 'Male' : 'Other';
+    const defaultDob = String(payload.dateOfBirth || '2012-01-01');
+
+    db.prepare(`
+      INSERT INTO students (
+        id, school_id, user_id, admission_number, admission_date,
+        first_name, middle_name, last_name, date_of_birth, gender, student_email,
+        current_class_id, current_arm_id, photo_file_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `).run(
+      studentId,
+      schoolId,
+      linkedUserId,
+      assignedAdmissionNumber,
+      todayIso,
+      firstName,
+      middleNameStr,
+      lastName,
+      defaultDob,
+      formattedGender,
+      studentEmail,
+      classId,
+      armId,
+      photoFileId,
+    );
+
+    const currentSession = db
+      .prepare('SELECT id FROM academic_sessions WHERE school_id = ? AND is_current = 1 LIMIT 1')
+      .get(schoolId) as { id: string } | undefined;
+
+    if (classId) {
+      db.prepare(`
+        INSERT INTO class_enrollments (id, school_id, student_id, class_id, arm_id, academic_session_id, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'active')
+      `).run(`enr_${crypto.randomUUID()}`, schoolId, studentId, classId, armId, currentSession?.id ?? null);
+
+      db.prepare(`
+        INSERT INTO student_class_history (
+          id, school_id, student_id, academic_session_id,
+          from_class_id, from_arm_id, to_class_id, to_arm_id,
+          action_type, effective_date, notes, recorded_by_user_id
+        ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, 'initial_placement', ?, 'Registered via Telegram Bot', ?)
+      `).run(
+        `sch_${crypto.randomUUID()}`,
+        schoolId,
+        studentId,
+        currentSession?.id ?? null,
+        classId,
+        armId,
+        todayIso,
+        link.user_id,
+      );
+    }
+
+    const idCard = issueDigitalIdCard({
+      schoolId,
+      studentId,
+      actorUserId: link.user_id,
+    });
+
+    db.exec('COMMIT');
+
+    recordAuditLog({
+      actorUserId: link.user_id,
+      actorEmail: link.user_email || 'telegram_user',
+      actorRole: link.role,
+      schoolId,
+      authEnvironment: 'school',
+      action: 'school.student.created',
+      resourceType: 'student',
+      resourceId: studentId,
+      outcome: 'success',
+      metadata: {
+        admissionNumber: assignedAdmissionNumber,
+        source: 'telegram_bot',
+        hasPhoto: Boolean(photoFileId),
+        hasLogin: Boolean(linkedUserId),
+      },
+    });
+
+    clearChatState(chatId);
+
+    const photoStatus = photoFileId ? '✅ Uploaded & Verified' : 'None (send /uploadphoto anytime)';
+    const loginText =
+      createLogin && studentEmail
+        ? `📧 *Portal Login:* \`${studentEmail}\`\n🔑 *Temporary Password:* \`${tempPassword}\`\n`
+        : `📧 *Portal Login:* None provisioned\n`;
+
+    const caption =
+      `🎉 *Student Successfully Registered & Provisioned!*\n\n` +
+      `👤 *Student:* *${fullName}*\n` +
+      `🎓 *Admission No:* \`${assignedAdmissionNumber}\`\n` +
+      `🏫 *Class:* ${className}\n` +
+      `⚧ *Gender:* ${gender.toUpperCase()}\n` +
+      `🆔 *Digital ID Card:* \`${idCard.cardNumber}\`\n` +
+      `${loginText}` +
+      `📸 *Passport Photo:* ${photoStatus}\n\n` +
+      `The Digital ID QR Pass below is active immediately for QR check-ins and 1-click portal sign in.`;
+
+    const inlineKeyboard: TelegramInlineButton[][] = [
+      [{ text: '🆔 View Digital ID Card', callback_data: `menu:view_id:${studentId}` }],
+      [
+        { text: '➕ Register Another Student', callback_data: 'menu:reg_student' },
+        { text: '🎓 All Students', callback_data: 'menu:students' },
+      ],
+      [{ text: '⬅️ Admin Menu', callback_data: 'menu:home' }],
+    ];
+
+    try {
+      const qrPngBuffer = await QRCode.toBuffer(idCard.rawQrToken, { width: 360, margin: 2 });
+      await sendTelegramPhoto(chatId, qrPngBuffer, caption, {
+        inlineKeyboard,
+        filename: 'student-id-qr.png',
+      });
+    } catch {
+      await sendTelegramMessage(chatId, caption, { inlineKeyboard });
+    }
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error('[TelegramBot] Failed to execute student registration:', err);
+    clearChatState(chatId);
+    await sendTelegramMessage(chatId, `❌ Failed to register student. Please check school settings and retry.`, {
+      inlineKeyboard: [[{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]],
+    });
+  }
+}
+
+async function startTeacherRegistration(
+  chatId: string,
+  link: TelegramLinkRow,
+  prefillName?: string,
+): Promise<void> {
+  if (!canManageSchoolMembers(link)) {
+    await sendTelegramMessage(chatId, `⚠️ Only School Administrators can register teachers.`);
+    return;
+  }
+  const school = resolveTargetSchool(link);
+  if (!school) {
+    await sendTelegramMessage(chatId, `⚠️ No active school tenant found.`);
+    return;
+  }
+
+  const payloadBase = {
+    schoolId: school.id,
+    schoolName: school.name,
+    schoolSlug: school.slug,
+    actorUserId: link.user_id,
+  };
+
+  if (prefillName?.trim()) {
+    const fullName = prefillName.trim();
+    setChatState(chatId, 'reg_tch_spec', { ...payloadBase, fullName });
+    await promptTeacherSpecialization(chatId, fullName);
+    return;
+  }
+
+  setChatState(chatId, 'reg_tch_name', payloadBase);
+  await sendTelegramMessage(
+    chatId,
+    `👨‍🏫 *Register New Faculty Teacher* (Step 1/4)\n\n` +
+      `Enter the teacher's *Full Name* (e.g. \`Mr. Babatunde Fashola\` or \`Dr. Grace Adeyemi\`):\n` +
+      `_(Reply with /cancel at any time to abort.)_`,
+  );
+}
+
+async function promptTeacherSpecialization(chatId: string, fullName: string): Promise<void> {
+  await sendTelegramMessage(
+    chatId,
+    `👨‍🏫 *Register Teacher: ${fullName}* (Step 2/4)\n\n` +
+      `Enter their *Subject Specialization* or *Academic Role* (e.g. \`Mathematics Lead\` or \`Physics Teacher\`):`,
+  );
+}
+
+async function promptTeacherAccountSelection(chatId: string, fullName: string): Promise<void> {
+  await sendTelegramMessage(
+    chatId,
+    `🔐 *Teacher Portal Credentials* (Step 3/4)\n\n` +
+      `Configure portal login access for *${fullName}*:`,
+    {
+      inlineKeyboard: [
+        [{ text: '⚡ Auto-Generate Staff ID, Email & Password', callback_data: 'reg_tch_acc:auto' }],
+        [{ text: '✉️ Enter Custom Email', callback_data: 'reg_tch_acc:custom' }],
+        [{ text: '❌ Cancel Registration', callback_data: 'reg_action:cancel' }],
+      ],
+    },
+  );
+}
+
+async function promptTeacherPhotoUpload(chatId: string, fullName: string): Promise<void> {
+  await sendTelegramMessage(
+    chatId,
+    `📷 *Teacher Profile Photo* (Step 4/4)\n\n` +
+      `📸 *Please send or upload a profile photo for ${fullName} now!*\n\n` +
+      `Or tap *Skip Photo* below to finalize registration immediately.`,
+    {
+      inlineKeyboard: [
+        [{ text: '⏭️ Skip Photo & Finalize', callback_data: 'reg_tch_photo:skip' }],
+        [{ text: '❌ Cancel Registration', callback_data: 'reg_action:cancel' }],
+      ],
+    },
+  );
+}
+
+async function executeTeacherRegistration(
+  chatId: string,
+  link: TelegramLinkRow,
+  payload: Record<string, unknown>,
+  photoDownload?: { buffer: Buffer; mimeType: string; originalName: string } | null,
+): Promise<void> {
+  const db = getDb();
+  const schoolId = String(payload.schoolId || link.school_id || '');
+  const fullName = String(payload.fullName || 'Teacher');
+  const specialization = String(payload.specialization || 'Faculty Teacher');
+  const staffIdNumber = String(payload.staffIdNumber || allocateStaffIdNumber(schoolId));
+  const email = String(
+    payload.email ||
+      generateSafeEmail(
+        fullName.split(' ')[0] || 'Teacher',
+        fullName.split(' ').pop() || 'Faculty',
+        String(payload.schoolSlug || 'school'),
+        'tch',
+      ),
+  );
+  const tempPassword = String(payload.tempPassword || generateSafePassword('Teach'));
+
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  const firstName = parts[0] || 'Teacher';
+  const lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+  const middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : null;
+
+  let photoFileId: string | null = null;
+  if (photoDownload && photoDownload.buffer.length > 0) {
+    try {
+      const stored = saveValidatedFile({
+        schoolId,
+        uploadedByUserId: link.user_id,
+        category: 'teacher_profile_picture',
+        originalName: photoDownload.originalName || `${staffIdNumber}_passport.jpg`,
+        claimedMimeType: photoDownload.mimeType || 'image/jpeg',
+        contentBase64: photoDownload.buffer.toString('base64'),
+        visibility: 'private_tenant',
+      });
+      photoFileId = stored.id;
+    } catch (err) {
+      console.warn('[TelegramBot] Teacher photo validation warning:', err);
+    }
+  }
+
+  const teacherId = `tch_${crypto.randomUUID()}`;
+  const userId = `usr_${crypto.randomUUID()}`;
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`
+      INSERT INTO users (id, email, full_name, password_hash, user_type, is_active)
+      VALUES (?, ?, ?, ?, 'school_member', 1)
+    `).run(userId, email.toLowerCase(), fullName, hashPassword(tempPassword));
+
+    db.prepare(`
+      INSERT INTO school_memberships (id, school_id, user_id, role_id, title, status)
+      VALUES (?, ?, ?, 'role_teacher', ?, 'active')
+    `).run(`mem_${crypto.randomUUID()}`, schoolId, userId, specialization);
+
+    const middleNameStr = middleName || '';
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const teacherGender = 'Other';
+
+    db.prepare(`
+      INSERT INTO teachers (
+        id, school_id, user_id, staff_id_number, first_name, middle_name, last_name,
+        gender, employment_date, email, specialization, photo_file_id, employment_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `).run(
+      teacherId,
+      schoolId,
+      userId,
+      staffIdNumber,
+      firstName,
+      middleNameStr,
+      lastName,
+      teacherGender,
+      todayIso,
+      email.toLowerCase(),
+      specialization,
+      photoFileId,
+    );
+
+    db.exec('COMMIT');
+
+    recordAuditLog({
+      actorUserId: link.user_id,
+      actorEmail: link.user_email || 'telegram_user',
+      actorRole: link.role,
+      schoolId,
+      authEnvironment: 'school',
+      action: 'school.teacher.created',
+      resourceType: 'teacher',
+      resourceId: teacherId,
+      outcome: 'success',
+      metadata: { staffIdNumber, source: 'telegram_bot' },
+    });
+
+    clearChatState(chatId);
+
+    const photoStatus = photoFileId ? '✅ Uploaded & Verified' : 'None (can upload anytime)';
+
+    await sendTelegramMessage(
+      chatId,
+      `🎉 *Faculty Teacher Registered & Provisioned!*\n\n` +
+        `👤 *Teacher:* *${fullName}*\n` +
+        `🆔 *Staff ID:* \`${staffIdNumber}\`\n` +
+        `📚 *Specialization:* ${specialization}\n` +
+        `📧 *Portal Email:* \`${email}\`\n` +
+        `🔑 *Temporary Password:* \`${tempPassword}\`\n` +
+        `📸 *Staff Photo:* ${photoStatus}\n\n` +
+        `The teacher can log in immediately at the School Portal or link their account on Telegram.`,
+      {
+        inlineKeyboard: [
+          [
+            { text: '➕ Register Another Teacher', callback_data: 'menu:reg_teacher' },
+            { text: '👨‍🏫 All Teachers', callback_data: 'menu:teachers' },
+          ],
+          [{ text: '⬅️ Admin Menu', callback_data: 'menu:home' }],
+        ],
+      },
+    );
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error('[TelegramBot] Failed to execute teacher registration:', err);
+    clearChatState(chatId);
+    await sendTelegramMessage(chatId, `❌ Failed to register teacher. Please verify details and retry.`);
+  }
+}
+
+async function startParentRegistration(chatId: string, link: TelegramLinkRow): Promise<void> {
+  if (!canManageSchoolMembers(link)) {
+    await sendTelegramMessage(chatId, `⚠️ Only School Administrators can register parents.`);
+    return;
+  }
+  const school = resolveTargetSchool(link);
+  if (!school) {
+    await sendTelegramMessage(chatId, `⚠️ No active school tenant found.`);
+    return;
+  }
+  setChatState(chatId, 'reg_par_name', {
+    schoolId: school.id,
+    schoolSlug: school.slug,
+    actorUserId: link.user_id,
+  });
+  await sendTelegramMessage(
+    chatId,
+    `👪 *Register New Parent / Guardian* (Step 1/3)\n\n` +
+      `Enter the parent's *Full Name* (e.g. \`Mrs. Folake Bello\` or \`Dr. Charles Obi\`):\n` +
+      `_(Reply with /cancel at any time to abort.)_`,
+  );
+}
+
+async function executeParentRegistration(
+  chatId: string,
+  link: TelegramLinkRow,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const db = getDb();
+  const schoolId = String(payload.schoolId || link.school_id || '');
+  const fullName = String(payload.fullName || 'Parent');
+  const email = String(
+    payload.email ||
+      generateSafeEmail(
+        fullName.split(' ')[0] || 'Parent',
+        fullName.split(' ').pop() || 'Guardian',
+        String(payload.schoolSlug || 'school'),
+        'par',
+      ),
+  );
+  const phone = String(payload.phone || '');
+  const tempPassword = String(payload.tempPassword || generateSafePassword('Parent'));
+  const wardAdmissionNumber = payload.wardAdmissionNumber ? String(payload.wardAdmissionNumber).trim() : '';
+
+  const parentId = `par_${crypto.randomUUID()}`;
+  const userId = `usr_${crypto.randomUUID()}`;
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`
+      INSERT INTO users (id, email, full_name, password_hash, user_type, is_active)
+      VALUES (?, ?, ?, ?, 'school_member', 1)
+    `).run(userId, email.toLowerCase(), fullName, hashPassword(tempPassword));
+
+    db.prepare(`
+      INSERT INTO school_memberships (id, school_id, user_id, role_id, title, status)
+      VALUES (?, ?, ?, 'role_parent', 'Guardian', 'active')
+    `).run(`mem_${crypto.randomUUID()}`, schoolId, userId);
+
+    db.prepare(`
+      INSERT INTO parents (id, school_id, user_id, full_name, email, phone, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'active')
+    `).run(parentId, schoolId, userId, fullName, email.toLowerCase(), phone);
+
+    let linkedWardName: string | null = null;
+    if (wardAdmissionNumber) {
+      const student = db
+        .prepare('SELECT id, first_name, last_name FROM students WHERE school_id = ? AND UPPER(admission_number) = UPPER(?)')
+        .get(schoolId, wardAdmissionNumber) as { id: string; first_name: string; last_name: string } | undefined;
+
+      if (student) {
+        db.prepare(`
+          INSERT INTO student_guardians (id, school_id, student_id, parent_id, relationship, is_primary_guardian)
+          VALUES (?, ?, ?, ?, 'Guardian', 1)
+        `).run(`grd_${crypto.randomUUID()}`, schoolId, student.id, parentId);
+        linkedWardName = `${student.first_name} ${student.last_name}`;
+      }
+    }
+
+    db.exec('COMMIT');
+
+    clearChatState(chatId);
+
+    const wardText = linkedWardName
+      ? `👶 *Linked Ward:* ${linkedWardName} (\`${wardAdmissionNumber}\`)\n`
+      : `👶 *Linked Ward:* None (can link in portal)\n`;
+
+    await sendTelegramMessage(
+      chatId,
+      `🎉 *Parent / Guardian Registered Successfully!*\n\n` +
+        `👤 *Parent:* *${fullName}*\n` +
+        `📧 *Portal Email:* \`${email}\`\n` +
+        `🔑 *Temporary Password:* \`${tempPassword}\`\n` +
+        `${phone ? `📞 *Phone:* \`${phone}\`\n` : ''}` +
+        `${wardText}\n` +
+        `The parent can log in immediately to monitor attendance, fees, and published terminal results.`,
+      {
+        inlineKeyboard: [
+          [{ text: '➕ Register Another Parent', callback_data: 'menu:reg_parent' }],
+          [{ text: '⬅️ Admin Menu', callback_data: 'menu:home' }],
+        ],
+      },
+    );
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error('[TelegramBot] Failed to execute parent registration:', err);
+    clearChatState(chatId);
+    await sendTelegramMessage(chatId, `❌ Failed to register parent. Please verify and retry.`);
+  }
+}
+
+async function startPhotoUploadWizard(
+  chatId: string,
+  link: TelegramLinkRow,
+  identifier?: string,
+): Promise<void> {
+  if (!canManageSchoolMembers(link)) {
+    await sendTelegramMessage(chatId, `⚠️ Only School Administrators can upload member photos.`);
+    return;
+  }
+  const school = resolveTargetSchool(link);
+  if (!school) {
+    await sendTelegramMessage(chatId, `⚠️ No active school tenant found.`);
+    return;
+  }
+
+  const db = getDb();
+  if (identifier?.trim()) {
+    const query = identifier.trim();
+    const student = db
+      .prepare(`
+        SELECT id, first_name, last_name, admission_number
+        FROM students
+        WHERE school_id = ?
+          AND (UPPER(admission_number) = UPPER(?) OR LOWER(first_name || ' ' || last_name) LIKE LOWER(?))
+        LIMIT 1
+      `)
+      .get(school.id, query, `%${query}%`) as
+      | { id: string; first_name: string; last_name: string; admission_number: string }
+      | undefined;
+
+    if (student) {
+      setChatState(chatId, 'upload_target_photo', {
+        schoolId: school.id,
+        targetType: 'student',
+        targetId: student.id,
+        targetName: `${student.first_name} ${student.last_name}`,
+        targetCode: student.admission_number,
+      });
+      await sendTelegramMessage(
+        chatId,
+        `📸 *Found Student:* *${student.first_name} ${student.last_name}* (\`${student.admission_number}\`)\n\n` +
+          `Please *send or upload their new passport photo* now:\n_(Send /cancel to abort)_`,
+      );
+      return;
+    }
+
+    const teacher = db
+      .prepare(`
+        SELECT id, first_name, last_name, staff_id_number
+        FROM teachers
+        WHERE school_id = ?
+          AND (UPPER(staff_id_number) = UPPER(?) OR LOWER(first_name || ' ' || last_name) LIKE LOWER(?))
+        LIMIT 1
+      `)
+      .get(school.id, query, `%${query}%`) as
+      | { id: string; first_name: string; last_name: string; staff_id_number: string }
+      | undefined;
+
+    if (teacher) {
+      setChatState(chatId, 'upload_target_photo', {
+        schoolId: school.id,
+        targetType: 'teacher',
+        targetId: teacher.id,
+        targetName: `${teacher.first_name} ${teacher.last_name}`,
+        targetCode: teacher.staff_id_number,
+      });
+      await sendTelegramMessage(
+        chatId,
+        `📸 *Found Teacher:* *${teacher.first_name} ${teacher.last_name}* (\`${teacher.staff_id_number}\`)\n\n` +
+          `Please *send or upload their new profile photo* now:\n_(Send /cancel to abort)_`,
+      );
+      return;
+    }
+
+    await sendTelegramMessage(
+      chatId,
+      `❌ No student or teacher found matching \`${query}\`. Please verify the admission number or staff ID.`,
+    );
+    return;
+  }
+
+  setChatState(chatId, 'upload_photo_search', { schoolId: school.id });
+  await sendTelegramMessage(
+    chatId,
+    `📸 *Upload Passport / Profile Photo*\n\n` +
+      `Please reply with the student's *Admission Number* (e.g. \`DT-AF038E-2026-0001\`) or teacher's *Staff ID* (e.g. \`TCH-0001\`):\n` +
+      `_(Send /cancel at any time to abort)_`,
+  );
+}
+
+async function executePhotoUpload(
+  chatId: string,
+  link: TelegramLinkRow,
+  targetType: 'student' | 'teacher',
+  targetId: string,
+  targetName: string,
+  photoDownload: { buffer: Buffer; mimeType: string; originalName: string },
+): Promise<void> {
+  const db = getDb();
+  const schoolId = String(link.school_id || '');
+  try {
+    const category = targetType === 'student' ? 'student_profile_picture' : 'teacher_profile_picture';
+    const stored = saveValidatedFile({
+      schoolId: schoolId || null,
+      uploadedByUserId: link.user_id,
+      category,
+      originalName: photoDownload.originalName || `${targetType}_passport.jpg`,
+      claimedMimeType: photoDownload.mimeType || 'image/jpeg',
+      contentBase64: photoDownload.buffer.toString('base64'),
+      visibility: 'private_tenant',
+    });
+
+    if (targetType === 'student') {
+      db.prepare(`UPDATE students SET photo_file_id = ?, updated_at = datetime('now') WHERE id = ?`).run(
+        stored.id,
+        targetId,
+      );
+    } else {
+      db.prepare(`UPDATE teachers SET photo_file_id = ?, updated_at = datetime('now') WHERE id = ?`).run(
+        stored.id,
+        targetId,
+      );
+    }
+
+    clearChatState(chatId);
+
+    await sendTelegramMessage(
+      chatId,
+      `✅ *Passport Photo Updated Successfully!*\n\n` +
+        `Official photo has been verified and attached to *${targetName}*.\n` +
+        `This will appear on their Digital ID Card, broadsheets, and portal profile immediately.`,
+      {
+        inlineKeyboard: [
+          [
+            { text: '🎓 Students List', callback_data: 'menu:students' },
+            { text: '📸 Upload Another Photo', callback_data: 'menu:upload_photo' },
+          ],
+          [{ text: '⬅️ Admin Menu', callback_data: 'menu:home' }],
+        ],
+      },
+    );
+  } catch (err) {
+    console.error('[TelegramBot] Failed to upload photo:', err);
+    await sendTelegramMessage(
+      chatId,
+      `❌ Failed to store photo: ${err instanceof Error ? err.message : 'Invalid image file.'}\n` +
+        `Please send a standard JPEG or PNG photo.`,
+    );
+  }
+}
+
+async function handleListStudentsAction(chatId: string, link: TelegramLinkRow): Promise<void> {
+  if (!canManageSchoolMembers(link)) {
+    await sendTelegramMessage(chatId, `⚠️ Access restricted to school administrators.`);
+    return;
+  }
+  const school = resolveTargetSchool(link);
+  if (!school) {
+    await sendTelegramMessage(chatId, `⚠️ No school tenant found.`);
+    return;
+  }
+  const db = getDb();
+  const students = db
+    .prepare(`
+      SELECT s.id, s.first_name, s.last_name, s.admission_number, s.photo_file_id, c.name AS class_name
+      FROM students s
+      LEFT JOIN school_classes c ON c.id = s.current_class_id
+      WHERE s.school_id = ? AND s.status = 'active'
+      ORDER BY s.created_at DESC
+      LIMIT 8
+    `)
+    .all(school.id) as Array<{
+      id: string;
+      first_name: string;
+      last_name: string;
+      admission_number: string;
+      photo_file_id: string | null;
+      class_name: string | null;
+    }>;
+
+  if (students.length === 0) {
+    await sendTelegramMessage(
+      chatId,
+      `🎓 *School Students — ${school.name}*\n\nNo students registered yet.`,
+      {
+        inlineKeyboard: [
+          [{ text: '➕ Register First Student', callback_data: 'menu:reg_student' }],
+          [{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }],
+        ],
+      },
+    );
+    return;
+  }
+
+  let text = `🎓 *Recent Students — ${school.name} (${students.length})*\n\n`;
+  const keyboard: TelegramInlineButton[][] = [];
+  for (const s of students) {
+    const photoIcon = s.photo_file_id ? '📸' : '⚪';
+    text += `• ${photoIcon} *${s.first_name} ${s.last_name}* (\`${s.admission_number}\`)\n  Class: ${s.class_name || 'Unassigned'}\n`;
+    keyboard.push([{ text: `🆔 ID: ${s.first_name} (${s.admission_number})`, callback_data: `menu:view_id:${s.id}` }]);
+  }
+
+  keyboard.push([
+    { text: '➕ Register Student', callback_data: 'menu:reg_student' },
+    { text: '📸 Upload Photo', callback_data: 'menu:upload_photo' },
+  ]);
+  keyboard.push([{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }]);
+
+  await sendTelegramMessage(chatId, text, { inlineKeyboard: keyboard });
+}
+
+async function handleListTeachersAction(chatId: string, link: TelegramLinkRow): Promise<void> {
+  if (!canManageSchoolMembers(link)) {
+    await sendTelegramMessage(chatId, `⚠️ Access restricted to school administrators.`);
+    return;
+  }
+  const school = resolveTargetSchool(link);
+  if (!school) {
+    await sendTelegramMessage(chatId, `⚠️ No school tenant found.`);
+    return;
+  }
+  const db = getDb();
+  const teachers = db
+    .prepare(`
+      SELECT id, first_name, last_name, staff_id_number, specialization, email, photo_file_id
+      FROM teachers
+      WHERE school_id = ? AND employment_status = 'active'
+      ORDER BY created_at DESC
+      LIMIT 8
+    `)
+    .all(school.id) as Array<{
+      id: string;
+      first_name: string;
+      last_name: string;
+      staff_id_number: string;
+      specialization: string;
+      email: string;
+      photo_file_id: string | null;
+    }>;
+
+  if (teachers.length === 0) {
+    await sendTelegramMessage(
+      chatId,
+      `👨‍🏫 *Faculty Teachers — ${school.name}*\n\nNo faculty teachers registered yet.`,
+      {
+        inlineKeyboard: [
+          [{ text: '➕ Register First Teacher', callback_data: 'menu:reg_teacher' }],
+          [{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }],
+        ],
+      },
+    );
+    return;
+  }
+
+  let text = `👨‍🏫 *Faculty Teachers — ${school.name} (${teachers.length})*\n\n`;
+  for (const t of teachers) {
+    const photoIcon = t.photo_file_id ? '📸' : '⚪';
+    text += `• ${photoIcon} *${t.first_name} ${t.last_name}* (\`${t.staff_id_number}\`)\n  Role: ${t.specialization} · \`${t.email}\`\n`;
+  }
+
+  await sendTelegramMessage(chatId, text, {
+    inlineKeyboard: [
+      [{ text: '➕ Register Teacher', callback_data: 'menu:reg_teacher' }],
+      [{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }],
+    ],
+  });
+}
+
+async function sendStudentIdCardPhotoById(
+  chatId: string,
+  studentId: string,
+  schoolId: string,
+): Promise<void> {
+  const db = getDb();
+  const student = db
+    .prepare('SELECT first_name, last_name, admission_number, photo_file_id FROM students WHERE id = ? AND school_id = ?')
+    .get(studentId, schoolId) as
+    | { first_name: string; last_name: string; admission_number: string; photo_file_id: string | null }
+    | undefined;
+
+  if (!student) {
+    await sendTelegramMessage(chatId, `❌ Student not found.`);
+    return;
+  }
+
+  let card = db
+    .prepare("SELECT id, card_number, qr_token_encrypted, status, expires_at FROM student_id_cards WHERE student_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1")
+    .get(studentId) as
+    | { id: string; card_number: string; qr_token_encrypted: string; status: string; expires_at: string }
+    | undefined;
+
+  if (!card) {
+    const issued = issueDigitalIdCard({
+      schoolId,
+      studentId,
+      actorUserId: studentId,
+    });
+    card = db
+      .prepare('SELECT id, card_number, qr_token_encrypted, status, expires_at FROM student_id_cards WHERE id = ?')
+      .get(issued.cardId) as any;
+  }
+
+  if (!card) {
+    await sendTelegramMessage(chatId, `❌ Unable to issue Digital ID Card for this student.`);
+    return;
+  }
+
+  const secret = getOrCreateIdCardMasterSecret();
+  const rawQrToken = decryptIdCardToken(card.qr_token_encrypted, secret);
+  if (!rawQrToken) {
+    await sendTelegramMessage(chatId, `❌ Failed to decrypt card token.`);
+    return;
+  }
+
+  const caption =
+    `🆔 *Digital Student ID Card*\n\n` +
+    `👤 *Student:* *${student.first_name} ${student.last_name}*\n` +
+    `🎓 *Admission No:* \`${student.admission_number}\`\n` +
+    `💳 *Card Serial:* \`${card.card_number}\`\n` +
+    `✅ *Status:* ${card.status.toUpperCase()}\n` +
+    `📅 *Valid Until:* \`${card.expires_at.slice(0, 10)}\`\n` +
+    `📸 *Passport:* ${student.photo_file_id ? '✅ Attached' : 'None'}`;
+
+  const pngBuffer = await QRCode.toBuffer(rawQrToken, { width: 360, margin: 2 });
+  await sendTelegramPhoto(chatId, pngBuffer, caption, {
+    inlineKeyboard: [
+      [
+        { text: '➕ Register Student', callback_data: 'menu:reg_student' },
+        { text: '🎓 All Students', callback_data: 'menu:students' },
+      ],
+      [{ text: '⬅️ Admin Menu', callback_data: 'menu:home' }],
+    ],
+    filename: 'student-id-qr.png',
+  });
+}
+
 async function dispatchUserMenuAction(
   chatId: string,
   link: TelegramLinkRow,
@@ -1697,6 +2831,24 @@ async function dispatchUserMenuAction(
         chatId,
         `🆔 *Digital ID Card Check-In*\n\nPaste or send the student's QR code text (\`DTID-...\`) to mark them *Present* today.`,
       );
+      break;
+    case 'reg_student':
+      await startStudentRegistration(chatId, link);
+      break;
+    case 'reg_teacher':
+      await startTeacherRegistration(chatId, link);
+      break;
+    case 'reg_parent':
+      await startParentRegistration(chatId, link);
+      break;
+    case 'upload_photo':
+      await startPhotoUploadWizard(chatId, link);
+      break;
+    case 'students':
+      await handleListStudentsAction(chatId, link);
+      break;
+    case 'teachers':
+      await handleListTeachersAction(chatId, link);
       break;
     case 'overview':
       await handleOverviewAction(chatId, link);
@@ -1765,10 +2917,218 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           `All Students, Parents, Teachers, School Admins, and Platform Staff share this bot:\n\n` +
           `1️⃣ Connect your account via *Sign In / Link Portal Account* (or \`/link email password\`)\n` +
           `2️⃣ Tap *Open Web Portal* (\`/login\`) for 1-click sign-in without typing passwords again\n` +
-          `3️⃣ Check *Attendance*, *Results*, *Fees*, *Digital ID Card QR*, *Admissions*, or *Mark Check-ins* right inside Telegram!`,
+          `3️⃣ *Admins:* Register students (\`/regstudent\`), teachers (\`/regteacher\`), parents (\`/regparent\`), and upload passport photos (\`/uploadphoto\`)\n` +
+          `4️⃣ Check *Attendance*, *Results*, *Fees*, *Digital ID Card QR*, *Admissions*, or *Mark Check-ins* right inside Telegram!`,
         { inlineKeyboard: buildUnlinkedKeyboard() },
       );
       return;
+    }
+
+    if (data.startsWith('menu:view_id:')) {
+      const studentId = data.slice('menu:view_id:'.length);
+      const link = getTelegramLink(chatId);
+      if (link) {
+        const school = resolveTargetSchool(link);
+        if (school) {
+          await sendStudentIdCardPhotoById(chatId, studentId, school.id);
+          return;
+        }
+      }
+    }
+
+    if (data.startsWith('reg_stu_cls:')) {
+      const classVal = data.slice('reg_stu_cls:'.length);
+      const state = getChatState(chatId);
+      const link = getTelegramLink(chatId);
+      if (state && link) {
+        const schoolId = String(state.payload.schoolId || link.school_id || '');
+        if (classVal === 'skip') {
+          setChatState(chatId, 'reg_stu_gender', {
+            ...state.payload,
+            classId: null,
+            className: 'Unassigned',
+            armId: null,
+          });
+          await promptStudentGenderSelection(chatId, String(state.payload.fullName || 'Student'));
+          return;
+        }
+        const db = getDb();
+        const classRow = db
+          .prepare('SELECT id, name FROM school_classes WHERE id = ? AND school_id = ?')
+          .get(classVal, schoolId) as { id: string; name: string } | undefined;
+        if (classRow) {
+          const arms = db
+            .prepare("SELECT id, name FROM class_arms WHERE class_id = ? AND school_id = ? AND status = 'active' ORDER BY name ASC")
+            .all(classVal, schoolId) as Array<{ id: string; name: string }>;
+          if (arms.length > 0) {
+            const keyboard: TelegramInlineButton[][] = [];
+            let row: TelegramInlineButton[] = [];
+            for (const a of arms) {
+              row.push({ text: `🏷️ ${a.name}`, callback_data: `reg_stu_arm:${a.id}` });
+              if (row.length === 2) {
+                keyboard.push(row);
+                row = [];
+              }
+            }
+            if (row.length > 0) keyboard.push(row);
+            keyboard.push([{ text: '🚫 No Arm / Default', callback_data: 'reg_stu_arm:skip' }]);
+            setChatState(chatId, 'reg_stu_arm', {
+              ...state.payload,
+              classId: classRow.id,
+              className: classRow.name,
+            });
+            await sendTelegramMessage(
+              chatId,
+              `🎓 *Class ${classRow.name} Selected*\n\nSelect an arm/section:`,
+              { inlineKeyboard: keyboard },
+            );
+            return;
+          }
+          setChatState(chatId, 'reg_stu_gender', {
+            ...state.payload,
+            classId: classRow.id,
+            className: classRow.name,
+            armId: null,
+          });
+          await promptStudentGenderSelection(chatId, String(state.payload.fullName || 'Student'));
+          return;
+        }
+      }
+    }
+
+    if (data.startsWith('reg_stu_arm:')) {
+      const armVal = data.slice('reg_stu_arm:'.length);
+      const state = getChatState(chatId);
+      if (state) {
+        const db = getDb();
+        let armName = '';
+        if (armVal !== 'skip') {
+          const armRow = db
+            .prepare('SELECT name FROM class_arms WHERE id = ?')
+            .get(armVal) as { name: string } | undefined;
+          armName = armRow?.name || '';
+        }
+        const fullClassName = armName
+          ? `${state.payload.className} (${armName})`
+          : String(state.payload.className);
+        setChatState(chatId, 'reg_stu_gender', {
+          ...state.payload,
+          className: fullClassName,
+          armId: armVal === 'skip' ? null : armVal,
+        });
+        await promptStudentGenderSelection(chatId, String(state.payload.fullName || 'Student'));
+        return;
+      }
+    }
+
+    if (data.startsWith('reg_stu_gen:')) {
+      const gen = data.slice('reg_stu_gen:'.length);
+      const state = getChatState(chatId);
+      if (state) {
+        setChatState(chatId, 'reg_stu_account', {
+          ...state.payload,
+          gender: gen,
+        });
+        await promptStudentAccountSelection(chatId, String(state.payload.fullName || 'Student'));
+        return;
+      }
+    }
+
+    if (data.startsWith('reg_stu_acc:')) {
+      const accType = data.slice('reg_stu_acc:'.length);
+      const state = getChatState(chatId);
+      const link = getTelegramLink(chatId);
+      if (state && link) {
+        if (accType === 'auto') {
+          const email = generateSafeEmail(
+            String(state.payload.firstName || 'Student'),
+            String(state.payload.lastName || 'Student'),
+            String(state.payload.schoolSlug || 'school'),
+            'stu',
+          );
+          const password = generateSafePassword('Student');
+          setChatState(chatId, 'reg_stu_photo', {
+            ...state.payload,
+            createLogin: true,
+            studentEmail: email,
+            tempPassword: password,
+          });
+          await promptStudentPhotoUpload(chatId, String(state.payload.fullName || 'Student'));
+          return;
+        }
+        if (accType === 'custom') {
+          setChatState(chatId, 'reg_stu_await_email', state.payload);
+          await sendTelegramMessage(chatId, `✉️ Please reply with the student's *email address*:`);
+          return;
+        }
+        if (accType === 'none') {
+          setChatState(chatId, 'reg_stu_photo', {
+            ...state.payload,
+            createLogin: false,
+          });
+          await promptStudentPhotoUpload(chatId, String(state.payload.fullName || 'Student'));
+          return;
+        }
+      }
+    }
+
+    if (data === 'reg_stu_photo:skip') {
+      const state = getChatState(chatId);
+      const link = getTelegramLink(chatId);
+      if (state && link) {
+        await executeStudentRegistration(chatId, link, state.payload, null);
+        return;
+      }
+    }
+
+    if (data === 'reg_action:cancel') {
+      clearChatState(chatId);
+      const link = getTelegramLink(chatId);
+      if (link) {
+        await sendRoleDashboardWelcome(chatId, link);
+      } else {
+        await sendTelegramMessage(chatId, `Cancelled.`);
+      }
+      return;
+    }
+
+    if (data.startsWith('reg_tch_acc:')) {
+      const acc = data.slice('reg_tch_acc:'.length);
+      const state = getChatState(chatId);
+      if (state) {
+        if (acc === 'auto') {
+          const staffId = allocateStaffIdNumber(String(state.payload.schoolId || ''));
+          const email = generateSafeEmail(
+            String(state.payload.fullName || 'Teacher').split(' ')[0] || 'Teacher',
+            String(state.payload.fullName || 'Teacher').split(' ').pop() || 'Teacher',
+            String(state.payload.schoolSlug || 'school'),
+            'tch',
+          );
+          const password = generateSafePassword('Teach');
+          setChatState(chatId, 'reg_tch_photo', {
+            ...state.payload,
+            staffIdNumber: staffId,
+            email,
+            tempPassword: password,
+          });
+          await promptTeacherPhotoUpload(chatId, String(state.payload.fullName || 'Teacher'));
+          return;
+        }
+        if (acc === 'custom') {
+          setChatState(chatId, 'reg_tch_email', state.payload);
+          await sendTelegramMessage(chatId, `✉️ Please reply with the teacher's *email address*:`);
+          return;
+        }
+      }
+    }
+
+    if (data === 'reg_tch_photo:skip') {
+      const state = getChatState(chatId);
+      const link = getTelegramLink(chatId);
+      if (state && link) {
+        await executeTeacherRegistration(chatId, link, state.payload, null);
+        return;
+      }
     }
 
     if (data.startsWith('menu:')) {
@@ -1788,13 +3148,18 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
     return;
   }
 
-  // 2. Handle Text Messages & Slash Commands
+  // 2. Handle Text, Photos & Document Messages
   const message = update?.message || update?.edited_message;
-  if (!message || !message.text) return;
+  if (!message) return;
 
-  const chatId = String(message.chat.id);
-  const text = String(message.text).trim();
+  const chatId = String(message.chat?.id || '');
+  if (!chatId) return;
+
+  const rawText = typeof message.text === 'string' ? message.text.trim() : '';
+  const caption = typeof message.caption === 'string' ? message.caption.trim() : '';
+  const text = rawText || caption;
   const username = message.from?.username || message.from?.first_name || 'User';
+  const photoInfo = extractPhotoOrImageDocument(message);
 
   if (text.toLowerCase() === '/cancel') {
     clearChatState(chatId);
@@ -1809,8 +3174,59 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
     return;
   }
 
-  // Handle multi-step conversational state if not starting a slash command
-  if (!text.startsWith('/')) {
+  // Handle Photo / Passport Upload when in photo-expecting state
+  if (photoInfo) {
+    const state = getChatState(chatId);
+    const link = getTelegramLink(chatId);
+    if (link && state) {
+      if (state.step === 'reg_stu_photo') {
+        await sendTelegramMessage(chatId, `⏳ Processing student passport photo...`);
+        const downloaded = await downloadTelegramFile(photoInfo.fileId);
+        await executeStudentRegistration(chatId, link, state.payload, downloaded);
+        return;
+      }
+      if (state.step === 'reg_tch_photo') {
+        await sendTelegramMessage(chatId, `⏳ Processing teacher profile photo...`);
+        const downloaded = await downloadTelegramFile(photoInfo.fileId);
+        await executeTeacherRegistration(chatId, link, state.payload, downloaded);
+        return;
+      }
+      if (state.step === 'upload_target_photo') {
+        await sendTelegramMessage(chatId, `⏳ Storing passport photo...`);
+        const downloaded = await downloadTelegramFile(photoInfo.fileId);
+        if (downloaded) {
+          await executePhotoUpload(
+            chatId,
+            link,
+            state.payload.targetType as 'student' | 'teacher',
+            String(state.payload.targetId),
+            String(state.payload.targetName),
+            downloaded,
+          );
+        } else {
+          await sendTelegramMessage(chatId, `❌ Failed to download photo from Telegram. Please retry.`);
+        }
+        return;
+      }
+    }
+    if (link && canManageSchoolMembers(link)) {
+      await sendTelegramMessage(
+        chatId,
+        `📸 *Photo received!*\n\nWhat would you like to attach this photo to?`,
+        {
+          inlineKeyboard: [
+            [{ text: '➕ Register Student with this Photo', callback_data: 'menu:reg_student' }],
+            [{ text: '📸 Attach to Existing Student / Staff', callback_data: 'menu:upload_photo' }],
+            [{ text: '⬅️ Back to Menu', callback_data: 'menu:home' }],
+          ],
+        },
+      );
+      return;
+    }
+  }
+
+  // Handle multi-step conversational text state if not starting a slash command
+  if (text && !text.startsWith('/')) {
     const state = getChatState(chatId);
     if (state) {
       if (state.step === 'awaiting_identifier') {
@@ -1866,8 +3282,120 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           return;
         }
       }
+
+      if (state.step === 'reg_stu_name') {
+        const link = getTelegramLink(chatId);
+        if (link) {
+          const school = resolveTargetSchool(link);
+          if (school) {
+            await promptStudentClassSelection(chatId, link, school, text);
+            return;
+          }
+        }
+      }
+
+      if (state.step === 'reg_stu_await_email') {
+        const email = text.trim().toLowerCase();
+        if (!email.includes('@') || !email.includes('.')) {
+          await sendTelegramMessage(chatId, `❌ Please enter a valid email address (e.g. \`student@school.edu\`):`);
+          return;
+        }
+        const password = generateSafePassword('Student');
+        setChatState(chatId, 'reg_stu_photo', {
+          ...state.payload,
+          createLogin: true,
+          studentEmail: email,
+          tempPassword: password,
+        });
+        await promptStudentPhotoUpload(chatId, String(state.payload.fullName || 'Student'));
+        return;
+      }
+
+      if (state.step === 'reg_tch_name') {
+        setChatState(chatId, 'reg_tch_spec', { ...state.payload, fullName: text });
+        await promptTeacherSpecialization(chatId, text);
+        return;
+      }
+
+      if (state.step === 'reg_tch_spec') {
+        setChatState(chatId, 'reg_tch_acc', { ...state.payload, specialization: text });
+        await promptTeacherAccountSelection(chatId, String(state.payload.fullName || 'Teacher'));
+        return;
+      }
+
+      if (state.step === 'reg_tch_email') {
+        const email = text.trim().toLowerCase();
+        if (!email.includes('@') || !email.includes('.')) {
+          await sendTelegramMessage(chatId, `❌ Please enter a valid email address:`);
+          return;
+        }
+        const staffId = allocateStaffIdNumber(String(state.payload.schoolId || ''));
+        const password = generateSafePassword('Teach');
+        setChatState(chatId, 'reg_tch_photo', {
+          ...state.payload,
+          staffIdNumber: staffId,
+          email,
+          tempPassword: password,
+        });
+        await promptTeacherPhotoUpload(chatId, String(state.payload.fullName || 'Teacher'));
+        return;
+      }
+
+      if (state.step === 'reg_par_name') {
+        setChatState(chatId, 'reg_par_contact', { ...state.payload, fullName: text });
+        await sendTelegramMessage(
+          chatId,
+          `👪 *Register Parent: ${text}* (Step 2/3)\n\n` +
+            `Please reply with their *Email* and optional *Phone* (e.g. \`parent@gmail.com, 08012345678\`):`,
+        );
+        return;
+      }
+
+      if (state.step === 'reg_par_contact') {
+        const parts = text.split(/[,;\s]+/).map((p: string) => p.trim()).filter(Boolean);
+        const email = parts.find((p: string) => p.includes('@')) || '';
+        const phone = parts.find((p: string) => /^\+?[0-9]{7,15}$/.test(p)) || '';
+        if (!email) {
+          await sendTelegramMessage(chatId, `❌ Please provide at least a valid email address for the parent:`);
+          return;
+        }
+        setChatState(chatId, 'reg_par_ward', {
+          ...state.payload,
+          email,
+          phone,
+          tempPassword: generateSafePassword('Parent'),
+        });
+        await sendTelegramMessage(
+          chatId,
+          `👶 *Link Student Ward* (Step 3/3)\n\n` +
+            `Enter the student ward's *Admission Number* to link them immediately, or send \`/skip\` to complete without linking:`,
+        );
+        return;
+      }
+
+      if (state.step === 'reg_par_ward') {
+        const wardAdm = text.toLowerCase() === '/skip' ? '' : text.trim();
+        const link = getTelegramLink(chatId);
+        if (link) {
+          await executeParentRegistration(chatId, link, {
+            ...state.payload,
+            wardAdmissionNumber: wardAdm,
+          });
+          return;
+        }
+      }
+
+      if (state.step === 'upload_photo_search') {
+        const link = getTelegramLink(chatId);
+        if (link) {
+          await startPhotoUploadWizard(chatId, link, text.trim());
+          return;
+        }
+      }
     }
   }
+
+  if (!text) return;
 
   const parts = text.split(/\s+/);
   const command = parts[0].toLowerCase().split('@')[0];
@@ -1878,7 +3406,6 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
       clearChatState(chatId);
       const startParam = args[0]?.trim() || '';
 
-      // Support 1-click portal deep link: /start link_<token>
       if (startParam.startsWith('link_')) {
         const rawConnectToken = startParam.slice('link_'.length);
         const consumed = consumeTelegramToken(rawConnectToken, 'connect_link');
@@ -1934,13 +3461,93 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
       await sendTelegramMessage(
         chatId,
         `🤖 *Portal Bot Commands*\n\n` +
-          `• \`/link <email_or_id> <password>\` — Verify & connect any portal account\n` +
+          `• \`/link <email_or_id> <password>\` — Verify & connect portal account\n` +
           `• \`/idlogin <DTID-...>\` — Student Digital ID login\n` +
           `• \`/login\` — 1-click sign-in link to your web portal\n` +
+          `• \`/regstudent [name]\` — Register student + passport photo + Digital ID\n` +
+          `• \`/regteacher [name]\` — Register faculty teacher + staff credentials\n` +
+          `• \`/regparent\` — Register parent/guardian + link student ward\n` +
+          `• \`/uploadphoto [id]\` — Upload passport photo for student or staff\n` +
+          `• \`/students\` & \`/teachers\` — Member directories\n` +
           `• \`/attendance\`, \`/results\`, \`/fees\`, \`/idcard\`, \`/wards\`, \`/classes\`, \`/overview\`\n` +
           `• \`/status\` & \`/unlink\``,
         { inlineKeyboard: buildUnlinkedKeyboard() },
       );
+      return;
+    }
+
+    case '/regstudent': {
+      const link = getTelegramLink(chatId);
+      if (!link) {
+        await sendTelegramMessage(chatId, `⚠️ Connect your school admin account first:`, {
+          inlineKeyboard: buildUnlinkedKeyboard(),
+        });
+        return;
+      }
+      const argName = args.join(' ').trim();
+      await startStudentRegistration(chatId, link, argName || undefined);
+      return;
+    }
+
+    case '/regteacher': {
+      const link = getTelegramLink(chatId);
+      if (!link) {
+        await sendTelegramMessage(chatId, `⚠️ Connect your school admin account first:`, {
+          inlineKeyboard: buildUnlinkedKeyboard(),
+        });
+        return;
+      }
+      const argName = args.join(' ').trim();
+      await startTeacherRegistration(chatId, link, argName || undefined);
+      return;
+    }
+
+    case '/regparent': {
+      const link = getTelegramLink(chatId);
+      if (!link) {
+        await sendTelegramMessage(chatId, `⚠️ Connect your school admin account first:`, {
+          inlineKeyboard: buildUnlinkedKeyboard(),
+        });
+        return;
+      }
+      await startParentRegistration(chatId, link);
+      return;
+    }
+
+    case '/uploadphoto': {
+      const link = getTelegramLink(chatId);
+      if (!link) {
+        await sendTelegramMessage(chatId, `⚠️ Connect your school admin account first:`, {
+          inlineKeyboard: buildUnlinkedKeyboard(),
+        });
+        return;
+      }
+      const identifier = args.join(' ').trim();
+      await startPhotoUploadWizard(chatId, link, identifier || undefined);
+      return;
+    }
+
+    case '/students': {
+      const link = getTelegramLink(chatId);
+      if (!link) {
+        await sendTelegramMessage(chatId, `⚠️ Connect your school admin account first:`, {
+          inlineKeyboard: buildUnlinkedKeyboard(),
+        });
+        return;
+      }
+      await handleListStudentsAction(chatId, link);
+      return;
+    }
+
+    case '/teachers': {
+      const link = getTelegramLink(chatId);
+      if (!link) {
+        await sendTelegramMessage(chatId, `⚠️ Connect your school admin account first:`, {
+          inlineKeyboard: buildUnlinkedKeyboard(),
+        });
+        return;
+      }
+      await handleListTeachersAction(chatId, link);
       return;
     }
 

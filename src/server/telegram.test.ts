@@ -104,6 +104,24 @@ before(async () => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     if (url.startsWith('https://api.telegram.org/')) {
+      if (url.includes('/file/bot')) {
+        const sampleJpeg = Buffer.from([
+          0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
+          0x00, 0x48, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
+          0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0a, 0x0c, 0x14, 0x0d, 0x0c, 0x0b, 0x0b, 0x0c, 0x19, 0x12,
+          0x13, 0x0f, 0x14, 0x1d, 0x1a, 0x1f, 0x1e, 0x1d, 0x1a, 0x1c, 0x1c, 0x20, 0x24, 0x2e, 0x27, 0x20,
+          0x22, 0x2c, 0x23, 0x1c, 0x1c, 0x28, 0x37, 0x29, 0x2c, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1f, 0x27,
+          0x39, 0x3d, 0x38, 0x32, 0x3c, 0x2e, 0x33, 0x34, 0x32, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01,
+          0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01,
+          0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
+          0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f,
+          0x00, 0xbf, 0x00, 0xff, 0xd9,
+        ]);
+        return new Response(sampleJpeg, {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        });
+      }
       const methodMatch = url.match(/\/bot[^/]+\/([^?]+)/);
       const method = methodMatch?.[1] || 'unknown';
       if (method === 'getMe') {
@@ -141,13 +159,29 @@ before(async () => {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      if (method === 'deleteWebhook' || method === 'answerCallbackQuery') {
+      if (method === 'deleteWebhook' || method === 'answerCallbackQuery' || method === 'sendChatAction') {
         return new Response(JSON.stringify({ ok: true, result: true }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      if (method === 'sendMessage' && init?.body && typeof init.body === 'string') {
+      if (method === 'getFile') {
+        const u = new URL(url);
+        const fileId = u.searchParams.get('file_id') || 'sample_file_id';
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              file_id: fileId,
+              file_unique_id: `uniq_${fileId}`,
+              file_size: 150,
+              file_path: `photos/${fileId}.jpg`,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if ((method === 'sendMessage' || method === 'editMessageText') && init?.body && typeof init.body === 'string') {
         const payload = JSON.parse(init.body) as any;
         sentCalls.push({
           method,
@@ -599,4 +633,350 @@ test('POST /api/owner/telegram/configure saves valid token even when Telegram se
     simulateSetWebhook429 = false;
   }
 });
+
+test('School Admin can register students (with photo & auto account), teachers, parents, and upload photos via Telegram Bot', async () => {
+  const db = getDb();
+  sentCalls.length = 0;
+
+  // 1. Register student with full name, class selection, gender, auto-credentials, and passport photo
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '/regstudent', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes("student's *Full Name*")));
+
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: 'Amaka Okon', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('class level') && c.inlineKeyboard));
+
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_stu_cls_1',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 101, chat: { id: 20004 } },
+        data: `reg_stu_cls:${ids.classId}`,
+      },
+    },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('gender')));
+
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_stu_gen_1',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 102, chat: { id: 20004 } },
+        data: 'reg_stu_gen:female',
+      },
+    },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Portal Account')));
+
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_stu_acc_1',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 103, chat: { id: 20004 } },
+        data: 'reg_stu_acc:auto',
+      },
+    },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Passport / Profile Photo')));
+
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      message: {
+        chat: { id: 20004 },
+        from: { username: 'ada_admin' },
+        photo: [
+          { file_id: 'thumb_amaka', file_size: 50, width: 90, height: 90 },
+          { file_id: 'passport_amaka_hi_res', file_size: 150, width: 300, height: 300 },
+        ],
+      },
+    },
+    baseUrl,
+  );
+
+  const regPhotoCall = sentCalls.find((c) => c.chatId === '20004' && c.isPhoto && c.text.includes('Amaka Okon'));
+  assert.ok(regPhotoCall, 'Telegram Bot must send Digital ID QR pass with confirmation caption');
+  assert.ok(regPhotoCall.text.includes('Student Successfully Registered & Provisioned'));
+  assert.ok(regPhotoCall.text.includes('Uploaded & Verified'));
+  assert.ok(regPhotoCall.text.includes('Portal Login:'));
+  assert.ok(regPhotoCall.text.includes('Temporary Password:'));
+
+  const amakaRow = db.prepare(`SELECT * FROM students WHERE first_name = 'Amaka' AND last_name = 'Okon'`).get() as any;
+  assert.ok(amakaRow);
+  assert.ok(amakaRow.admission_number);
+  assert.equal(amakaRow.gender, 'Female');
+  assert.equal(amakaRow.current_class_id, ids.classId);
+  assert.ok(amakaRow.photo_file_id, 'Student photo_file_id should be populated from Telegram upload');
+  assert.ok(amakaRow.user_id, 'User account should be provisioned');
+
+  const amakaUser = db.prepare(`SELECT * FROM users WHERE id = ?`).get(amakaRow.user_id) as any;
+  assert.ok(amakaUser);
+  assert.equal(amakaUser.full_name, 'Amaka Okon');
+  assert.equal(amakaUser.is_active, 1);
+
+  const amakaMembership = db
+    .prepare(`SELECT * FROM school_memberships WHERE school_id = ? AND user_id = ?`)
+    .get(ids.schoolId, amakaRow.user_id) as any;
+  assert.ok(amakaMembership);
+  assert.equal(amakaMembership.role_id, 'role_student');
+
+  const amakaIdCard = db
+    .prepare(`SELECT * FROM student_id_cards WHERE student_id = ? AND status = 'active'`)
+    .get(amakaRow.id) as any;
+  assert.ok(amakaIdCard);
+  assert.ok(amakaIdCard.card_number);
+
+  const amakaEnrollment = db
+    .prepare(`SELECT * FROM class_enrollments WHERE student_id = ? AND class_id = ?`)
+    .get(amakaRow.id, ids.classId) as any;
+  assert.ok(amakaEnrollment);
+
+  const amakaAudit = db
+    .prepare(`SELECT * FROM audit_logs WHERE action = 'school.student.created' AND resource_id = ?`)
+    .get(amakaRow.id) as any;
+  assert.ok(amakaAudit);
+
+  // 2. Register student with name passed as command argument and photo skipped
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '/regstudent David Adeleke', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('David Adeleke') && c.text.includes('class level')));
+
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_stu_cls_2',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 104, chat: { id: 20004 } },
+        data: `reg_stu_cls:${ids.classId}`,
+      },
+    },
+    baseUrl,
+  );
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_stu_gen_2',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 105, chat: { id: 20004 } },
+        data: 'reg_stu_gen:male',
+      },
+    },
+    baseUrl,
+  );
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_stu_acc_2',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 106, chat: { id: 20004 } },
+        data: 'reg_stu_acc:none',
+      },
+    },
+    baseUrl,
+  );
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_stu_photo_skip',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 107, chat: { id: 20004 } },
+        data: 'reg_stu_photo:skip',
+      },
+    },
+    baseUrl,
+  );
+
+  const davidRow = db.prepare(`SELECT * FROM students WHERE first_name = 'David' AND last_name = 'Adeleke'`).get() as any;
+  assert.ok(davidRow);
+  assert.equal(davidRow.photo_file_id, null, 'Skipped photo must result in null photo_file_id');
+  assert.equal(davidRow.user_id, null, 'Skipped portal account must result in null user_id');
+
+  // 3. Register teacher with auto staff ID and portal account
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '/regteacher Grace Danjuma', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Subject Specialization')));
+
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: 'Physics & Chemistry', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Teacher Portal Credentials')));
+
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_tch_acc_1',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 108, chat: { id: 20004 } },
+        data: 'reg_tch_acc:auto',
+      },
+    },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Teacher Profile Photo')));
+
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_tch_skip_photo',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 109, chat: { id: 20004 } },
+        data: 'reg_tch_photo:skip',
+      },
+    },
+    baseUrl,
+  );
+
+  const tchMsg = sentCalls.find((c) => c.chatId === '20004' && c.text.includes('Faculty Teacher Registered & Provisioned'));
+  assert.ok(tchMsg);
+  assert.ok(tchMsg.text.includes('Grace Danjuma'));
+  assert.ok(tchMsg.text.includes('Staff ID:'));
+  assert.ok(tchMsg.text.includes('Temporary Password:'));
+
+  const graceRow = db.prepare(`SELECT * FROM teachers WHERE first_name = 'Grace' AND last_name = 'Danjuma'`).get() as any;
+  assert.ok(graceRow);
+  assert.equal(graceRow.specialization, 'Physics & Chemistry');
+  assert.ok(graceRow.staff_id_number.startsWith('TCH-'));
+
+  const graceMembership = db
+    .prepare(`SELECT * FROM school_memberships WHERE school_id = ? AND user_id = ?`)
+    .get(ids.schoolId, graceRow.user_id) as any;
+  assert.ok(graceMembership);
+  assert.equal(graceMembership.role_id, 'role_teacher');
+
+  // 4. Register parent and link student ward
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '/regparent', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Register New Parent / Guardian')));
+
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: 'Chief Obi Okon', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Email')));
+
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '+2348022233445, obi.okon@family.test', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Link Student Ward')));
+
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: amakaRow.admission_number, from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+
+  const parMsg = sentCalls.find((c) => c.chatId === '20004' && c.text.includes('Parent / Guardian Registered Successfully'));
+  assert.ok(parMsg);
+  assert.ok(parMsg.text.includes('Chief Obi Okon'));
+  assert.ok(parMsg.text.includes('Amaka Okon'));
+
+  const parentRow = db.prepare(`SELECT * FROM parents WHERE full_name = 'Chief Obi Okon'`).get() as any;
+  assert.ok(parentRow);
+  assert.equal(parentRow.phone, '+2348022233445');
+  assert.equal(parentRow.email, 'obi.okon@family.test');
+
+  const guardianRow = db
+    .prepare(`SELECT * FROM student_guardians WHERE student_id = ? AND parent_id = ?`)
+    .get(amakaRow.id, parentRow.id) as any;
+  assert.ok(guardianRow);
+
+  // 5. Upload passport photo for existing member (David Adeleke) via /uploadphoto
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '/uploadphoto', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Upload Passport / Profile Photo')));
+
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: davidRow.admission_number, from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '20004' && c.text.includes('Found Student:')));
+
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      message: {
+        chat: { id: 20004 },
+        from: { username: 'ada_admin' },
+        document: {
+          file_id: 'doc_david_passport',
+          file_name: 'david_passport.jpg',
+          mime_type: 'image/jpeg',
+          file_size: 150,
+        },
+      },
+    },
+    baseUrl,
+  );
+
+  const photoUploadedMsg = sentCalls.find((c) => c.chatId === '20004' && c.text.includes('Passport Photo Updated'));
+  assert.ok(photoUploadedMsg);
+  assert.ok(photoUploadedMsg.text.includes('David Adeleke'));
+
+  const updatedDavid = db.prepare(`SELECT photo_file_id FROM students WHERE id = ?`).get(davidRow.id) as any;
+  assert.ok(updatedDavid.photo_file_id, 'Photo file ID must now be populated for David');
+
+  // 6. Directory listings & Digital ID Card QR inspection
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '/students', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  const studentsListMsg = sentCalls.find((c) => c.chatId === '20004' && c.text.includes('Recent Students —'));
+  assert.ok(studentsListMsg);
+  assert.ok(studentsListMsg.text.includes('Amaka Okon'));
+  assert.ok(studentsListMsg.text.includes('David Adeleke'));
+
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    { message: { chat: { id: 20004 }, text: '/teachers', from: { username: 'ada_admin' } } },
+    baseUrl,
+  );
+  const teachersListMsg = sentCalls.find((c) => c.chatId === '20004' && c.text.includes('Faculty Teachers —'));
+  assert.ok(teachersListMsg);
+  assert.ok(teachersListMsg.text.includes('Grace Danjuma'));
+
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_view_id_amaka',
+        from: { id: 20004, username: 'ada_admin' },
+        message: { message_id: 110, chat: { id: 20004 } },
+        data: `menu:view_id:${amakaRow.id}`,
+      },
+    },
+    baseUrl,
+  );
+  const viewIdPhotoCall = sentCalls.find((c) => c.chatId === '20004' && c.isPhoto && c.text.includes('Amaka Okon'));
+  assert.ok(viewIdPhotoCall, 'Admin can view and retrieve any student Digital ID Card photo');
+  assert.ok(viewIdPhotoCall.text.includes(amakaRow.admission_number));
+});
+
 

@@ -4,12 +4,14 @@ import QRCode from 'qrcode';
 import { getDb } from '../../../db/client.ts';
 import { recordAuditLog } from '../../audit.ts';
 import {
+  allocateNextCardNumber,
   decryptIdCardToken,
   encryptIdCardToken,
   evaluateIdCardValidity,
   formatIdCardNumber,
   generateIdCardQrToken,
   getOrCreateIdCardMasterSecret,
+  issueDigitalIdCard,
 } from '../../id-card-helpers.ts';
 import {
   type AuthenticatedRequest,
@@ -103,66 +105,13 @@ function getStudentForCard(schoolId: string, studentId: string): StudentProfileF
     .get(studentId, schoolId) as StudentProfileForCard | undefined;
 }
 
-function allocateNextCardNumber(schoolId: string): string {
-  const db = getDb();
-  const year = new Date().getUTCFullYear();
-  const prefix = `DT-IDC-${year}-`;
-  const rows = db
-    .prepare('SELECT card_number FROM student_id_cards WHERE school_id = ? AND card_number LIKE ?')
-    .all(schoolId, `${prefix}%`) as Array<{ card_number: string }>;
-
-  let maxSeq = 0;
-  for (const r of rows) {
-    const tail = r.card_number.slice(prefix.length);
-    const num = Number.parseInt(tail, 10);
-    if (Number.isFinite(num) && num > maxSeq) {
-      maxSeq = num;
-    }
-  }
-  return formatIdCardNumber(maxSeq + 1, year);
-}
-
 function issueCardInTransaction(params: {
   schoolId: string;
   studentId: string;
   actorUserId: string;
   validityDays: number;
 }): { cardId: string; cardNumber: string; expiresAt: string } {
-  const db = getDb();
-  const secret = getOrCreateIdCardMasterSecret();
-  const rawToken = generateIdCardQrToken();
-  const tokenHash = sha256Hex(rawToken);
-  const tokenEncrypted = encryptIdCardToken(rawToken, secret);
-  const cardId = `idc_${crypto.randomUUID()}`;
-  const cardNumber = allocateNextCardNumber(params.schoolId);
-  const expiresAt = new Date(Date.now() + params.validityDays * 86_400_000).toISOString();
-
-  db.prepare(`
-    UPDATE student_id_cards
-    SET status = 'revoked',
-        revoked_by_user_id = ?,
-        revoked_reason = 'Superseded by re-issued ID card',
-        revoked_at = datetime('now')
-    WHERE school_id = ? AND student_id = ? AND status = 'active'
-  `).run(params.actorUserId, params.schoolId, params.studentId);
-
-  db.prepare(`
-    INSERT INTO student_id_cards (
-      id, school_id, student_id, card_number, qr_token_hash, qr_token_encrypted,
-      status, issued_by_user_id, expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
-  `).run(
-    cardId,
-    params.schoolId,
-    params.studentId,
-    cardNumber,
-    tokenHash,
-    tokenEncrypted,
-    params.actorUserId,
-    expiresAt,
-  );
-
-  return { cardId, cardNumber, expiresAt };
+  return issueDigitalIdCard(params);
 }
 
 async function formatCardResponse(
