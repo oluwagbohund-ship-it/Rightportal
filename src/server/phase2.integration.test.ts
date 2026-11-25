@@ -721,3 +721,121 @@ test('Cross-tenant isolation and Role-Based Access Control enforcement', async (
   assert.equal(counts.classes, 2);
   assert.equal(counts.subjects, 1);
 });
+
+test('CSV-based bulk student import supports template download, preview validation, class/arm resolution, portal login creation, and RBAC checks', async () => {
+  // Teacher, student, parent, and workers cannot access bulk import endpoints
+  assert.equal(
+    (await api('/api/school/students/bulk-import/template.csv', { cookie: teacherCookie })).status,
+    403,
+  );
+  assert.equal(
+    (
+      await api('/api/school/students/bulk-import', {
+        method: 'POST',
+        cookie: student1Cookie,
+        body: { mode: 'preview', csvContent: 'first_name,last_name,date_of_birth,gender\nAda,Okafor,2012-01-01,Female' },
+      })
+    ).status,
+    403,
+  );
+
+  // Sample CSV template reflects active school classes
+  const tplRes = await api('/api/school/students/bulk-import/template.csv', { cookie: schoolACookie });
+  assert.equal(tplRes.status, 200);
+  const tplCsv = String(tplRes.json.raw ?? '');
+  assert.ok(tplCsv.includes('first_name,middle_name,last_name,date_of_birth,gender,class,arm'));
+  assert.ok(tplCsv.includes('JSS 1'));
+
+  const mixedCsv = [
+    'first_name,last_name,date_of_birth,gender,class,arm,admission_number,student_email,create_portal_login',
+    'Adaeze,Nwosu,14/05/2012,F,JSS 1,Gold,,adaeze.bulk@horizon.edu,yes',
+    'Kelechi,Ibe,2011-09-20,Male,JSS 2,Silver,HSC-BULK-099,,no',
+    'Archived,Kid,2012-03-11,Male,Legacy Class,,,archived@horizon.edu,no',
+    'DupAdm,Test,2012-03-11,Female,JSS 1,Gold,HSC-BULK-099,,no',
+    'BadDob,Row,2012-02-30,Female,JSS 1,Gold,,baddob@horizon.edu,yes',
+  ].join('\n');
+
+  // Preview mode validates without writing to database
+  const previewRes = await api('/api/school/students/bulk-import', {
+    method: 'POST',
+    cookie: schoolACookie,
+    body: {
+      mode: 'preview',
+      csvContent: mixedCsv,
+      defaultAdmissionDate: '2026-09-12',
+    },
+  });
+  assert.equal(previewRes.status, 200);
+  const previewSummary = previewRes.json.summary as Record<string, number>;
+  assert.equal(previewSummary.totalRows, 5);
+  assert.equal(previewSummary.validCount, 2);
+  assert.equal(previewSummary.errorCount, 3);
+  assert.equal(previewSummary.loginsToCreateCount, 1);
+
+  // Strict mode (skipInvalidRows: false) rejects commit when errors exist
+  const strictFail = await api('/api/school/students/bulk-import', {
+    method: 'POST',
+    cookie: schoolACookie,
+    body: {
+      mode: 'commit',
+      csvContent: mixedCsv,
+      defaultAdmissionDate: '2026-09-12',
+      skipInvalidRows: false,
+    },
+  });
+  assert.equal(strictFail.status, 400);
+
+  // Commit with skipInvalidRows: true enrolls the 2 valid rows atomically
+  const commitRes = await api('/api/school/students/bulk-import', {
+    method: 'POST',
+    cookie: schoolACookie,
+    body: {
+      mode: 'commit',
+      csvContent: mixedCsv,
+      defaultAdmissionDate: '2026-09-12',
+      skipInvalidRows: true,
+    },
+  });
+  assert.equal(commitRes.status, 201);
+  const commitSummary = commitRes.json.summary as Record<string, number>;
+  assert.equal(commitSummary.importedCount, 2);
+  assert.equal(commitSummary.skippedCount, 3);
+  assert.equal(commitSummary.loginsCreatedCount, 1);
+
+  const imported = commitRes.json.imported as Array<{
+    id: string;
+    admissionNumber: string;
+    fullName: string;
+    studentEmail: string;
+    loginCreated: boolean;
+    temporaryPassword: string | null;
+  }>;
+  assert.equal(imported.length, 2);
+  const adaeze = imported.find((r) => r.fullName === 'Adaeze Nwosu');
+  assert.ok(adaeze);
+  assert.ok(adaeze.admissionNumber.startsWith('HSC-2026-'));
+  assert.equal(adaeze.loginCreated, true);
+  assert.ok(adaeze.temporaryPassword && adaeze.temporaryPassword.length >= 8);
+
+  const kelechi = imported.find((r) => r.fullName === 'Kelechi Ibe');
+  assert.ok(kelechi);
+  assert.equal(kelechi.admissionNumber, 'HSC-BULK-099');
+  assert.equal(kelechi.loginCreated, false);
+
+  // Provisioned student can immediately authenticate via School Portal login
+  const bulkStuLogin = await api('/api/auth/school/login', {
+    method: 'POST',
+    body: {
+      email: 'adaeze.bulk@horizon.edu',
+      password: adaeze.temporaryPassword,
+      schoolCode: schoolACode,
+    },
+  });
+  assert.equal(bulkStuLogin.status, 200);
+
+  // Directory reflects newly enrolled students (2 existing + 2 bulk = 4)
+  const listAfterBulk = await api('/api/school/students', { cookie: schoolACookie });
+  assert.equal(listAfterBulk.status, 200);
+  assert.equal((listAfterBulk.json.pagination as { total: number }).total, 4);
+});
+

@@ -582,12 +582,19 @@ export function resolveUserAccountContext(userId: string): Omit<VerifiedPortalAc
 }
 
 export function normalizeLoginIdentifier(raw: string): string {
-  return raw
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .trim()
-    .replace(/^mailto:/i, '')
-    .replace(/^[`"'<\s]+|[`"'>\s]+$/g, '')
-    .trim();
+  let value = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  value = value.replace(
+    /^(?:(?:portal\s+)?e-?mail|staff\s*id|admission(?:\s*(?:no\.?|number))?)\s*[:=]\s*/i,
+    '',
+  ).trim();
+  const mdMailtoMatch = value.match(/^\[[^\]]*\]\(\s*mailto:([^)\s]+)\s*\)$/i);
+  if (mdMailtoMatch) {
+    value = mdMailtoMatch[1].trim();
+  }
+  value = value.replace(/^[`"'“”‘’<\s(]+|[`"'“”‘’>\s),;.]+$/g, '').trim();
+  value = value.replace(/^mailto:/i, '');
+  value = value.replace(/^[`"'“”‘’<\s(]+|[`"'“”‘’>\s),;.]+$/g, '').trim();
+  return value;
 }
 
 type IdentifierLookupResult =
@@ -595,13 +602,27 @@ type IdentifierLookupResult =
   | { status: 'no_portal_login'; roleLabel: string; name: string }
   | { status: 'school_code'; schoolName: string }
   | { status: 'empty_db' }
-  | { status: 'not_found' };
+  | { status: 'not_found'; ownerClaimed: boolean };
 
 export function findPortalAccountByIdentifier(identifierRaw: string): IdentifierLookupResult {
   const identifier = normalizeLoginIdentifier(identifierRaw);
-  if (!identifier) return { status: 'not_found' };
-
   const db = getDb();
+
+  if (!identifier) {
+    const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM users`).get() as { cnt: number };
+    if ((countRow?.cnt ?? 0) === 0) {
+      return { status: 'empty_db' };
+    }
+    const ownerRow = db
+      .prepare(`
+        SELECT COUNT(*) AS cnt
+        FROM workforce_assignments wa
+        INNER JOIN roles r ON r.id = wa.role_id
+        WHERE r.code = 'platform_owner'
+      `)
+      .get() as { cnt: number };
+    return { status: 'not_found', ownerClaimed: (ownerRow?.cnt ?? 0) > 0 };
+  }
 
   // 1. Direct email match in users table
   const byEmail = db
@@ -753,15 +774,31 @@ export function findPortalAccountByIdentifier(identifierRaw: string): Identifier
     return { status: 'empty_db' };
   }
 
-  return { status: 'not_found' };
+  const ownerRow = db
+    .prepare(`
+      SELECT COUNT(*) AS cnt
+      FROM workforce_assignments wa
+      INNER JOIN roles r ON r.id = wa.role_id
+      WHERE r.code = 'platform_owner'
+    `)
+    .get() as { cnt: number };
+
+  return { status: 'not_found', ownerClaimed: (ownerRow?.cnt ?? 0) > 0 };
 }
 
-export function formatIdentifierLookupError(lookup: Exclude<IdentifierLookupResult, { status: 'found' }>): string {
+export function formatIdentifierLookupError(
+  lookup: Exclude<IdentifierLookupResult, { status: 'found' }>,
+  baseUrl?: string,
+): string {
+  const portalBase = baseUrl ? getPortalBaseUrl(baseUrl) : '';
+  const workersLoginUrl = portalBase ? `${portalBase}/login/workers` : '/login/workers';
+  const registerUrl = portalBase ? `${portalBase}/register` : '/register';
+
   switch (lookup.status) {
     case 'empty_db':
       return (
-        'No portal accounts exist in this server database yet. Please open the web portal first to initialize the Platform Owner (/workers/login) or register your school (/register-school). ' +
-        'If hosted on Render, ensure a Persistent Disk is mounted at SQLITE_DB_PATH so accounts persist across deploys.'
+        `No portal accounts exist in this server database yet. Open the web portal first to initialize the Platform Owner (${workersLoginUrl}) or register a school (${registerUrl}). ` +
+        `If hosted on Render, mount a Persistent Disk at SQLITE_DB_PATH so accounts are not cleared on deploy.`
       );
     case 'school_code':
       return `That is the School Code for *${lookup.schoolName}*, not a personal account login. Please enter your personal *Portal Email*, *Admission Number*, or *Staff ID*.`;
@@ -769,7 +806,17 @@ export function formatIdentifierLookupError(lookup: Exclude<IdentifierLookupResu
       return `Found ${lookup.roleLabel} profile for *${lookup.name}*, but portal login is not enabled for this profile yet. Ask your School Administrator to enable portal access (or for students, use *Student Digital ID Card Login*).`;
     case 'not_found':
     default:
-      return 'No portal account matched that email, admission number, or staff ID.';
+      if (!lookup.ownerClaimed) {
+        return (
+          `No portal account matched that email, admission number, or staff ID.\n\n` +
+          `⚠️ *No Platform Owner account is claimed in this database yet.* If you are trying to open your Owner Dashboard, first open ${workersLoginUrl} on the web to initialize Platform Owner access (if on Render without a Persistent Disk, redeploys reset the local SQLite database).`
+        );
+      }
+      return (
+        `No portal account matched that email, admission number, or staff ID.\n\n` +
+        `• Double-check the exact email registered on this server (or your Admission Number / Staff ID).\n` +
+        `• For *Owner / Workforce* access, you can also sign in at ${workersLoginUrl} and click *Connect Telegram Account* for 1-click linking.`
+      );
   }
 }
 
@@ -3432,7 +3479,15 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
   const chatId = String(message.chat?.id || '');
   if (!chatId) return;
 
-  const rawText = typeof message.text === 'string' ? message.text.trim() : '';
+  let rawText = typeof message.text === 'string' ? message.text.trim() : '';
+  if (rawText && !rawText.includes('@') && Array.isArray(message.entities)) {
+    const mailtoEntity = message.entities.find(
+      (e: any) => e?.type === 'text_link' && typeof e?.url === 'string' && /^mailto:/i.test(e.url),
+    );
+    if (mailtoEntity?.url) {
+      rawText = mailtoEntity.url;
+    }
+  }
   const caption = typeof message.caption === 'string' ? message.caption.trim() : '';
   const text = rawText || caption;
   const username = message.from?.username || message.from?.first_name || 'User';
@@ -3527,8 +3582,8 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           return;
         }
 
-        // Allow users to paste "email password" or "email\npassword" in one message
-        const pairMatch = text.trim().match(/^(\S+)\s+([\s\S]+)$/);
+        // Allow users to paste "email password" or "email\npassword" (even with "Email: ..." prefix) in one message
+        const pairMatch = cleaned.match(/^(\S+)\s+([\s\S]+)$/);
         if (pairMatch) {
           const firstLookup = findPortalAccountByIdentifier(pairMatch[1]);
           if (firstLookup.status === 'found') {
@@ -3551,13 +3606,33 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
             await sendRoleDashboardWelcome(chatId, link);
             return;
           }
+          if (firstLookup.status !== 'not_found') {
+            await sendTelegramMessage(
+              chatId,
+              `❌ ${formatIdentifierLookupError(firstLookup, requestBaseUrl)}\n\nPlease check and enter your *Portal Email*, *Admission Number*, or *Staff ID* again (or send \`/cancel\`):`,
+            );
+            return;
+          }
+          // If user wrote e.g. "owner user@example.com", extract the single email token cleanly
+          const secondToken = pairMatch[2].trim();
+          if (!/\s/.test(secondToken) && secondToken.includes('@')) {
+            const secondLookup = findPortalAccountByIdentifier(secondToken);
+            if (secondLookup.status === 'found') {
+              setChatState(chatId, 'awaiting_password', { identifier: secondLookup.canonicalIdentifier });
+              await sendTelegramMessage(
+                chatId,
+                `🔑 Now enter your *portal password* for \`${secondLookup.canonicalIdentifier}\`:`,
+              );
+              return;
+            }
+          }
         }
 
         const lookup = findPortalAccountByIdentifier(cleaned);
         if (lookup.status !== 'found') {
           await sendTelegramMessage(
             chatId,
-            `❌ ${formatIdentifierLookupError(lookup)}\n\nPlease check and enter your *Portal Email*, *Admission Number*, or *Staff ID* again (or send \`/cancel\`):`,
+            `❌ ${formatIdentifierLookupError(lookup, requestBaseUrl)}\n\nPlease check and enter your *Portal Email*, *Admission Number*, or *Staff ID* again (or send \`/cancel\`):`,
           );
           return;
         }
@@ -3747,7 +3822,7 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           }
         }
 
-        const pairMatch = text.trim().match(/^(\S+)\s+([\s\S]+)$/);
+        const pairMatch = cleaned.match(/^(\S+)\s+([\s\S]+)$/);
         if (pairMatch) {
           const firstLookup = findPortalAccountByIdentifier(pairMatch[1]);
           if (firstLookup.status === 'found') {
@@ -3781,7 +3856,7 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           setChatState(chatId, 'awaiting_identifier');
           await sendTelegramMessage(
             chatId,
-            `❌ ${formatIdentifierLookupError(directLookup)}\n\nPlease enter a valid *Portal Email*, *Admission Number*, or *Staff ID*:`,
+            `❌ ${formatIdentifierLookupError(directLookup, requestBaseUrl)}\n\nPlease enter a valid *Portal Email*, *Admission Number*, or *Staff ID* (or send \`/cancel\`):`,
             { inlineKeyboard: buildUnlinkedKeyboard() },
           );
           return;
@@ -3989,7 +4064,7 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           setChatState(chatId, 'awaiting_identifier');
           await sendTelegramMessage(
             chatId,
-            `❌ ${formatIdentifierLookupError(lookup)}\n\nPlease check and enter your *Portal Email*, *Admission Number*, or *Staff ID* again:`,
+            `❌ ${formatIdentifierLookupError(lookup, requestBaseUrl)}\n\nPlease check and enter your *Portal Email*, *Admission Number*, or *Staff ID* again (or send \`/cancel\`):`,
           );
           return;
         }

@@ -379,6 +379,7 @@ function seedReferenceCatalog(db: DatabaseSync): void {
   `);
 
   insertSetting.run('allow_public_school_registration', JSON.stringify(true));
+  insertSetting.run('require_access_code_for_school_registration', JSON.stringify(true));
   insertSetting.run('require_school_verification_banner', JSON.stringify(true));
   insertSetting.run('session_ttl_hours', JSON.stringify(24));
   insertSetting.run('dt_ai_core_enabled', JSON.stringify(false));

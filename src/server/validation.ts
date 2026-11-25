@@ -82,12 +82,7 @@ export const bootstrapOwnerSchema = z.object({
   bootstrapKey: z.string().trim().max(128).optional(),
 });
 
-export const registerSchoolSchema = z.object({
-  accessCode: z
-    .string()
-    .trim()
-    .min(4, 'A unique Platform Owner access code is required to create a school')
-    .max(32),
+const schoolRegistrationFields = {
   schoolName: z.string().trim().min(3, 'School name must be at least 3 characters').max(140),
   country: z.string().trim().min(2, 'Country is required').max(80),
   city: z.string().trim().min(2, 'City is required').max(80),
@@ -102,6 +97,34 @@ export const registerSchoolSchema = z.object({
     .regex(/[A-Za-z]/, 'Password must contain at least one letter')
     .regex(/[0-9]/, 'Password must contain at least one number'),
   initialSessionName: z.string().trim().max(60).optional(),
+};
+
+export const registerSchoolSchema = z.object({
+  accessCode: z
+    .string()
+    .trim()
+    .min(4, 'A unique Platform Owner access code is required to create a school')
+    .max(32),
+  ...schoolRegistrationFields,
+});
+
+export const openRegisterSchoolSchema = z.object({
+  accessCode: z.string().trim().max(32).optional().default(''),
+  ...schoolRegistrationFields,
+});
+
+export const ownerCreateSchoolSchema = z.object({
+  customCode: z
+    .string()
+    .trim()
+    .min(4, 'Custom code must be at least 4 characters')
+    .max(24, 'Custom code must be at most 24 characters')
+    .regex(/^[A-Za-z0-9-]+$/, 'Code may contain only letters, numbers, and hyphens')
+    .or(z.literal(''))
+    .optional()
+    .default(''),
+  initialStatus: z.enum(['active', 'pending_verification']).optional().default('active'),
+  ...schoolRegistrationFields,
 });
 
 export const createAcademicSessionSchema = z
@@ -147,6 +170,7 @@ export const createWorkforceMemberSchema = z.object({
 
 export const updatePlatformSettingsSchema = z.object({
   allowPublicSchoolRegistration: z.boolean(),
+  requireAccessCodeForSchoolRegistration: z.boolean().optional().default(true),
   requireSchoolVerificationBanner: z.boolean(),
   sessionTtlHours: z.number().int().min(1).max(168),
 });
@@ -408,6 +432,19 @@ export const updateStudentSchema = createStudentSchema
   .extend({
     admissionNumber: z.string().trim().min(2, 'Admission number is required').max(48),
   });
+
+export const bulkImportStudentsSchema = z.object({
+  mode: z.enum(['preview', 'commit']).default('preview'),
+  csvContent: z
+    .string()
+    .min(1, 'CSV content is required')
+    .max(2_000_000, 'CSV file exceeds 2MB size limit'),
+  defaultClassId: z.string().trim().max(80).optional().nullable(),
+  defaultArmId: z.string().trim().max(80).optional().nullable(),
+  defaultAdmissionDate: optionalDateSchema,
+  createPortalLogins: z.boolean().optional().default(false),
+  skipInvalidRows: z.boolean().optional().default(true),
+});
 
 export const updateStudentStatusSchema = z.object({
   status: z.enum(['active', 'suspended', 'graduated', 'withdrawn']),

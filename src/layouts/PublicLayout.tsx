@@ -1,5 +1,5 @@
-import React, { Suspense, useState } from 'react';
-import { Menu, X } from 'lucide-react';
+import React, { Suspense, useEffect, useState } from 'react';
+import { ArrowRight, Menu, ShieldCheck, X } from 'lucide-react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { BrandLoader } from '../components/brand/BrandLoader.tsx';
 import { Logo } from '../components/brand/Logo.tsx';
@@ -16,15 +16,32 @@ const NAV_LINKS = [
 
 export function PublicLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [ownerClaimed, setOwnerClaimed] = useState<boolean | null>(null);
   const { pathname } = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/public/info')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { ownerClaimed?: boolean } | null) => {
+        if (!active || !data || typeof data.ownerClaimed !== 'boolean') return;
+        setOwnerClaimed(data.ownerClaimed);
+      })
+      .catch(() => {
+        // Ignore transient network errors for optional setup banner
+      });
+    return () => {
+      active = false;
+    };
+  }, [pathname]);
 
   const isNavActive = (matchPaths: string[]) => matchPaths.includes(pathname);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-[#0F172A]">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-8 px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-6 px-4 sm:px-6 lg:px-8">
           <a
             href="/index.html"
             onClick={() => setMobileMenuOpen(false)}
@@ -36,7 +53,7 @@ export function PublicLayout() {
 
           <nav
             aria-label="Primary Navigation"
-            className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600"
+            className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600"
           >
             {NAV_LINKS.map((item) => {
               const active = isNavActive(item.matchPaths);
@@ -57,7 +74,13 @@ export function PublicLayout() {
             })}
           </nav>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <Link
+              to="/login/workers"
+              className="hidden md:inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0F172A] whitespace-nowrap shrink-0 transition-colors"
+            >
+              {ownerClaimed === false ? 'Create Owner Account' : 'Owner Portal'}
+            </Link>
             <Button
               type="button"
               size="sm"
@@ -101,10 +124,21 @@ export function PublicLayout() {
                   </a>
                 );
               })}
-              <div className="pt-3 mt-2 border-t border-slate-100">
+              <div className="grid grid-cols-2 gap-2 pt-3 mt-2 border-t border-slate-100">
                 <Button
                   type="button"
-                  className="w-full h-11"
+                  variant="outline"
+                  className="h-11"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    navigate('/login/workers');
+                  }}
+                >
+                  {ownerClaimed === false ? 'Create Owner' : 'Owner Login'}
+                </Button>
+                <Button
+                  type="button"
+                  className="h-11"
                   onClick={() => {
                     setMobileMenuOpen(false);
                     navigate('/login/school');
@@ -117,6 +151,26 @@ export function PublicLayout() {
           </div>
         ) : null}
       </header>
+
+      {ownerClaimed === false ? (
+        <div className="border-b border-blue-200 bg-[#EFF6FF]">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+            <div className="flex items-center gap-2 text-xs text-[#1E3A8A]">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-[#2563EB]" aria-hidden="true" />
+              <span>
+                <strong>First-Time Platform Setup:</strong> No Platform Owner account has been created yet.
+              </span>
+            </div>
+            <Link
+              to="/login/workers"
+              className="inline-flex items-center gap-1.5 self-start rounded-md bg-[#1E3A8A] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1E40AF] transition-colors whitespace-nowrap shrink-0 sm:self-auto"
+            >
+              <span>Create First Platform Owner Account</span>
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       <main className="flex-1">
         <Suspense fallback={<BrandLoader label="Loading public page..." />}>

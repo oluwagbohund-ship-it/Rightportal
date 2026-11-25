@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Building2, CheckCircle2, KeyRound, QrCode, ShieldCheck } from 'lucide-react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Logo } from '../../components/brand/Logo.tsx';
@@ -25,6 +25,23 @@ export function SchoolLoginPage() {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ownerClaimed, setOwnerClaimed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/public/info')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { ownerClaimed?: boolean } | null) => {
+        if (!active || !data || typeof data.ownerClaimed !== 'boolean') return;
+        setOwnerClaimed(data.ownerClaimed);
+      })
+      .catch(() => {
+        // Ignore non-critical info check
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   if (!authLoading && user && user.authEnvironment === 'school') {
     return <Navigate to={getDashboardPathForRole(user.roleCode)} replace />;
@@ -84,14 +101,30 @@ export function SchoolLoginPage() {
           </a>
           <div className="flex items-center gap-4">
             <a href="/register.html" className="font-medium text-[#1E3A8A] hover:underline whitespace-nowrap">
-              Create a New School
+              Create School &amp; Admin
             </a>
-            <Link to="/login/workers" className="hidden sm:inline text-slate-500 hover:text-[#0F172A] whitespace-nowrap">
-              Workforce Login
+            <Link to="/login/workers" className="text-slate-600 hover:text-[#0F172A] whitespace-nowrap font-medium">
+              {ownerClaimed === false ? 'Create Owner Account' : 'Owner Portal'}
             </Link>
           </div>
         </div>
       </header>
+
+      {ownerClaimed === false ? (
+        <div className="border-b border-blue-200 bg-[#EFF6FF]">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-2.5 sm:px-6 lg:px-8 text-xs text-[#1E3A8A]">
+            <span>
+              <strong>First-Time Setup:</strong> Platform Owner account has not been created yet.
+            </span>
+            <Link
+              to="/login/workers"
+              className="rounded-md bg-[#1E3A8A] px-3 py-1 font-semibold text-white hover:bg-[#1E40AF] transition-colors"
+            >
+              Create First Platform Owner Account
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       <main className="mx-auto w-full max-w-6xl flex-1 flex items-center px-4 py-10 sm:px-6 lg:px-8">
         <div className="grid w-full gap-10 lg:grid-cols-12 lg:items-center">
@@ -266,7 +299,7 @@ export function SchoolLoginPage() {
                     className="inline-flex items-center gap-1.5 font-medium text-slate-700 hover:text-[#1E3A8A] hover:underline"
                   >
                     <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Have a Platform Owner code? Create a new school</span>
+                    <span>New school? Create your School &amp; Admin Account</span>
                   </a>
                 </div>
               </CardContent>

@@ -174,6 +174,11 @@ const StudentRegistrationPage = lazy(() =>
     default: m.StudentRegistrationPage,
   })),
 );
+const StudentBulkImportPage = lazy(() =>
+  import('./pages/school-admin/students/StudentBulkImportPage.tsx').then((m) => ({
+    default: m.StudentBulkImportPage,
+  })),
+);
 const StudentProfilePage = lazy(() =>
   import('./pages/school-admin/students/StudentProfilePage.tsx').then((m) => ({
     default: m.StudentProfilePage,
@@ -643,6 +648,7 @@ export default function App() {
                   <Route path="students" element={<StudentsPage />} />
                   <Route path="students/id-cards" element={<StudentIdCardsPage />} />
                   <Route path="students/register" element={<StudentRegistrationPage />} />
+                  <Route path="students/bulk-import" element={<StudentBulkImportPage />} />
                   <Route path="students/:studentId" element={<StudentProfilePage />} />
                   <Route path="students/:studentId/edit" element={<StudentEditPage />} />
                   <Route path="students/:studentId/documents" element={<StudentDocumentsPage />} />

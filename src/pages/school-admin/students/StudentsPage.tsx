@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { GraduationCap, Plus } from 'lucide-react';
+import { GraduationCap, Plus, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../../../components/dashboard/PageHeader.tsx';
 import { Alert } from '../../../components/ui/alert.tsx';
@@ -129,6 +129,12 @@ export function StudentsPage() {
                 Promotions &amp; Transfers
               </Button>
             </Link>
+            <Link to="/dashboard/school-admin/students/bulk-import">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+                <Upload className="h-4 w-4" aria-hidden="true" />
+                <span>Bulk Import CSV</span>
+              </Button>
+            </Link>
             <Link to="/dashboard/school-admin/students/register">
               <Button type="button" size="sm" className="whitespace-nowrap shrink-0">
                 <Plus className="h-4 w-4" aria-hidden="true" />
@@ -216,11 +222,18 @@ export function StudentsPage() {
               <p className="mt-1 text-xs text-slate-500">
                 Register a student directly or convert an approved admission application.
               </p>
-              <Link to="/dashboard/school-admin/students/register" className="mt-4 inline-block">
-                <Button type="button" size="sm">
-                  Register First Student
-                </Button>
-              </Link>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                <Link to="/dashboard/school-admin/students/register">
+                  <Button type="button" size="sm">
+                    Register First Student
+                  </Button>
+                </Link>
+                <Link to="/dashboard/school-admin/students/bulk-import">
+                  <Button type="button" size="sm" variant="outline">
+                    Bulk Import CSV
+                  </Button>
+                </Link>
+              </div>
             </div>
           ) : (
             <>

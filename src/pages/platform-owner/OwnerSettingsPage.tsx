@@ -9,6 +9,7 @@ import { apiRequest } from '../../lib/api.ts';
 
 interface PlatformSettingsState {
   allowPublicSchoolRegistration: boolean;
+  requireAccessCodeForSchoolRegistration: boolean;
   requireSchoolVerificationBanner: boolean;
   sessionTtlHours: number;
 }
@@ -20,6 +21,7 @@ export function OwnerSettingsPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [settingsState, setSettingsState] = useState<PlatformSettingsState>({
     allowPublicSchoolRegistration: true,
+    requireAccessCodeForSchoolRegistration: true,
     requireSchoolVerificationBanner: true,
     sessionTtlHours: 24,
   });
@@ -88,7 +90,7 @@ export function OwnerSettingsPage() {
                 <div>
                   <Label htmlFor="set-public-reg">Allow Public School Registration</Label>
                   <p className="text-xs text-slate-500 mt-1">
-                    Controls whether schools can self-register at /register.
+                    Controls whether schools can self-register their institution and admin account at /register.
                   </p>
                 </div>
                 <input
@@ -99,6 +101,27 @@ export function OwnerSettingsPage() {
                     setSettingsState((prev) => ({
                       ...prev,
                       allowPublicSchoolRegistration: e.target.checked,
+                    }))
+                  }
+                  className="h-5 w-5 rounded border-slate-300 text-[#1E3A8A]"
+                />
+              </div>
+
+              <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <Label htmlFor="set-require-code">Require Access Code for School Registration</Label>
+                  <p className="text-xs text-slate-500 mt-1">
+                    When unchecked, any school can create its workspace and Founding Admin account at /register without needing an invite code first.
+                  </p>
+                </div>
+                <input
+                  id="set-require-code"
+                  type="checkbox"
+                  checked={settingsState.requireAccessCodeForSchoolRegistration}
+                  onChange={(e) =>
+                    setSettingsState((prev) => ({
+                      ...prev,
+                      requireAccessCodeForSchoolRegistration: e.target.checked,
                     }))
                   }
                   className="h-5 w-5 rounded border-slate-300 text-[#1E3A8A]"

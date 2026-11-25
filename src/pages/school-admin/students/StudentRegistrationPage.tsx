@@ -152,12 +152,19 @@ export function StudentRegistrationPage() {
         title="Register New Student"
         description="Enroll a student with automatic or custom admission numbering, class placement, guardian association, and optional portal login."
         actions={
-          <Link to="/dashboard/school-admin/students">
-            <Button type="button" size="sm" variant="outline">
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              <span>Back to Students</span>
-            </Button>
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/dashboard/school-admin/students/bulk-import">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+                Bulk Import CSV
+              </Button>
+            </Link>
+            <Link to="/dashboard/school-admin/students">
+              <Button type="button" size="sm" variant="outline" className="whitespace-nowrap shrink-0">
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                <span>Back to Students</span>
+              </Button>
+            </Link>
+          </div>
         }
       />
 

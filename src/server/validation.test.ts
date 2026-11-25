@@ -7,6 +7,8 @@ import {
   createSchoolAccessCodeSchema,
   createSchoolMemberSchema,
   createSchoolNotificationSchema,
+  openRegisterSchoolSchema,
+  ownerCreateSchoolSchema,
   passwordResetConfirmSchema,
   passwordResetRequestSchema,
   registerSchoolSchema,
@@ -214,3 +216,53 @@ test('restoreBackupSchema enforces safe filename format and explicit boolean con
     true,
   );
 });
+
+test('openRegisterSchoolSchema and ownerCreateSchoolSchema validate direct and open school onboarding', () => {
+  const openValid = openRegisterSchoolSchema.safeParse({
+    schoolName: 'Horizon Academy',
+    country: 'Nigeria',
+    city: 'Abuja',
+    contactEmail: 'admin@horizon.edu',
+    adminFullName: 'Tunde Bakare',
+    adminEmail: 'tunde@horizon.edu',
+    adminPassword: 'Password123',
+  });
+  assert.equal(openValid.success, true);
+
+  const openWeakPass = openRegisterSchoolSchema.safeParse({
+    schoolName: 'Horizon Academy',
+    country: 'Nigeria',
+    city: 'Abuja',
+    contactEmail: 'admin@horizon.edu',
+    adminFullName: 'Tunde Bakare',
+    adminEmail: 'tunde@horizon.edu',
+    adminPassword: 'short',
+  });
+  assert.equal(openWeakPass.success, false);
+
+  const ownerValid = ownerCreateSchoolSchema.safeParse({
+    customCode: 'DT-DIRECT01',
+    initialStatus: 'active',
+    schoolName: 'Summit College',
+    country: 'Ghana',
+    city: 'Accra',
+    contactEmail: 'office@summit.edu',
+    adminFullName: 'Kwame Mensah',
+    adminEmail: 'kwame@summit.edu',
+    adminPassword: 'Password123',
+  });
+  assert.equal(ownerValid.success, true);
+
+  const ownerBadStatus = ownerCreateSchoolSchema.safeParse({
+    initialStatus: 'suspended',
+    schoolName: 'Summit College',
+    country: 'Ghana',
+    city: 'Accra',
+    contactEmail: 'office@summit.edu',
+    adminFullName: 'Kwame Mensah',
+    adminEmail: 'kwame@summit.edu',
+    adminPassword: 'Password123',
+  });
+  assert.equal(ownerBadStatus.success, false);
+});
+

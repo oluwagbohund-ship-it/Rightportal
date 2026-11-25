@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Copy, KeyRound, ShieldOff } from 'lucide-react';
+import { Building2, Check, Copy, KeyRound, Plus, ShieldOff, X } from 'lucide-react';
 import { PageHeader } from '../../components/dashboard/PageHeader.tsx';
 import { Alert } from '../../components/ui/alert.tsx';
 import { Button } from '../../components/ui/button.tsx';
@@ -36,6 +36,27 @@ export function OwnerSchoolsPage() {
   const [creatingCode, setCreatingCode] = useState(false);
   const [lastIssuedCode, setLastIssuedCode] = useState<string | null>(null);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
+
+  // Direct School + Founding Admin creation state
+  const [showCreateSchoolForm, setShowCreateSchoolForm] = useState(false);
+  const [creatingSchool, setCreatingSchool] = useState(false);
+  const [schoolName, setSchoolName] = useState('');
+  const [country, setCountry] = useState('Nigeria');
+  const [city, setCity] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [directCustomCode, setDirectCustomCode] = useState('');
+  const [initialStatus, setInitialStatus] = useState<'active' | 'pending_verification'>('active');
+  const [initialSessionName, setInitialSessionName] = useState('2026/2027 Session');
+  const [adminFullName, setAdminFullName] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('');
+  const [createdSchoolSummary, setCreatedSchoolSummary] = useState<{
+    name: string;
+    code: string;
+    adminEmail: string;
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -141,6 +162,63 @@ export function OwnerSchoolsPage() {
     }
   };
 
+  const handleCreateSchoolDirect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setActionErr(null);
+    setActionMsg(null);
+
+    if (adminPassword !== confirmAdminPassword) {
+      setActionErr('Founding Administrator passwords do not match.');
+      return;
+    }
+
+    setCreatingSchool(true);
+    try {
+      const res = await apiRequest<{ school: SchoolRecord; adminEmail: string }>(
+        '/api/owner/schools',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            schoolName: schoolName.trim(),
+            country: country.trim(),
+            city: city.trim(),
+            contactEmail: contactEmail.trim(),
+            phone: phone.trim(),
+            customCode: directCustomCode.trim(),
+            initialStatus,
+            initialSessionName: initialSessionName.trim(),
+            adminFullName: adminFullName.trim(),
+            adminEmail: adminEmail.trim(),
+            adminPassword,
+          }),
+        },
+      );
+      setSchools((prev) => [res.school, ...prev]);
+      setCreatedSchoolSummary({
+        name: res.school.name,
+        code: res.school.code,
+        adminEmail: res.adminEmail,
+      });
+      setActionMsg(
+        `Created ${res.school.name} (Code: ${res.school.code}) and Founding Admin account ${res.adminEmail}.`,
+      );
+      setSchoolName('');
+      setCity('');
+      setContactEmail('');
+      setPhone('');
+      setDirectCustomCode('');
+      setAdminFullName('');
+      setAdminEmail('');
+      setAdminPassword('');
+      setConfirmAdminPassword('');
+      setShowCreateSchoolForm(false);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Unable to create school and administrator.');
+    } finally {
+      setCreatingSchool(false);
+    }
+  };
+
   const filteredSchools = schools.filter((s) => {
     const q = schoolSearch.trim().toLowerCase();
     if (!q) return true;
@@ -158,13 +236,31 @@ export function OwnerSchoolsPage() {
         title="School Management & Access Codes"
         description="Issue unique onboarding codes required to create a school and enter the platform, and manage registered school tenants."
         actions={
-          <div className="w-full sm:w-64">
-            <Input
-              aria-label="Filter schools"
-              placeholder="Search name, code, city..."
-              value={schoolSearch}
-              onChange={(e) => setSchoolSearch(e.target.value)}
-            />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+            <div className="w-full sm:w-64">
+              <Input
+                aria-label="Filter schools"
+                placeholder="Search name, code, city..."
+                value={schoolSearch}
+                onChange={(e) => setSchoolSearch(e.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              onClick={() => setShowCreateSchoolForm((prev) => !prev)}
+            >
+              {showCreateSchoolForm ? (
+                <>
+                  <X className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                  <span>Close Form</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                  <span>Create School &amp; Admin</span>
+                </>
+              )}
+            </Button>
           </div>
         }
       />
@@ -172,6 +268,222 @@ export function OwnerSchoolsPage() {
       {error ? <Alert variant="error">{error}</Alert> : null}
       {actionErr ? <Alert variant="error">{actionErr}</Alert> : null}
       {actionMsg ? <Alert variant="success">{actionMsg}</Alert> : null}
+
+      {createdSchoolSummary ? (
+        <Card className="border-emerald-200 bg-emerald-50">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 py-4">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                School &amp; Founding Admin Ready
+              </p>
+              <p className="text-sm font-semibold text-emerald-950">
+                {createdSchoolSummary.name} · Code:{' '}
+                <span className="font-mono font-bold">{createdSchoolSummary.code}</span>
+              </p>
+              <p className="text-xs text-emerald-900">
+                Admin Login Email: <span className="font-medium">{createdSchoolSummary.adminEmail}</span> (Sign in via{' '}
+                <span className="font-mono">/login/school</span>)
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="border-emerald-300 bg-white text-emerald-900 hover:bg-emerald-100"
+                onClick={() => void handleCopy(createdSchoolSummary.code)}
+              >
+                {copiedValue === createdSchoolSummary.code ? (
+                  <>
+                    <Check className="h-4 w-4 mr-1" aria-hidden="true" />
+                    <span>Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4 mr-1" aria-hidden="true" />
+                    <span>Copy Code</span>
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setCreatedSchoolSummary(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {showCreateSchoolForm ? (
+        <Card className="border-slate-300 bg-white">
+          <CardHeader>
+            <div className="flex items-center gap-2 text-[#1E3A8A]">
+              <Building2 className="h-5 w-5" aria-hidden="true" />
+              <CardTitle>Create School &amp; Founding Admin Account</CardTitle>
+            </div>
+            <CardDescription>
+              Provision a school workspace, assign its School Login Code, and create its Founding School Administrator in one step.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={(e) => void handleCreateSchoolDirect(e)} className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
+                  <Label htmlFor="direct-school-name">School Name</Label>
+                  <Input
+                    id="direct-school-name"
+                    required
+                    value={schoolName}
+                    onChange={(e) => setSchoolName(e.target.value)}
+                    placeholder="Rightec International School"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="direct-country">Country</Label>
+                  <Input
+                    id="direct-country"
+                    required
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    placeholder="Nigeria"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="direct-city">City</Label>
+                  <Input
+                    id="direct-city"
+                    required
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="Lagos"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="direct-contact-email">Official School Email</Label>
+                  <Input
+                    id="direct-contact-email"
+                    type="email"
+                    required
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    placeholder="info@school.edu"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="direct-phone">Phone (Optional)</Label>
+                  <Input
+                    id="direct-phone"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+234 800 000 0000"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="direct-custom-code">Custom School Code (Optional)</Label>
+                  <Input
+                    id="direct-custom-code"
+                    value={directCustomCode}
+                    onChange={(e) => setDirectCustomCode(e.target.value.toUpperCase())}
+                    placeholder="Leave blank to auto-generate"
+                    className="font-mono uppercase"
+                    maxLength={24}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="direct-status">Initial Status</Label>
+                  <Select
+                    id="direct-status"
+                    value={initialStatus}
+                    onChange={(e) => setInitialStatus(e.target.value as 'active' | 'pending_verification')}
+                  >
+                    <option value="active">Active (Ready for Login)</option>
+                    <option value="pending_verification">Pending Verification</option>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="direct-session">Initial Academic Session</Label>
+                  <Input
+                    id="direct-session"
+                    value={initialSessionName}
+                    onChange={(e) => setInitialSessionName(e.target.value)}
+                    placeholder="2026/2027 Session"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200 pt-4">
+                <h3 className="text-sm font-semibold text-[#0F172A] mb-3">
+                  Founding School Administrator Credentials
+                </h3>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="direct-admin-name">Administrator Full Name</Label>
+                    <Input
+                      id="direct-admin-name"
+                      required
+                      value={adminFullName}
+                      onChange={(e) => setAdminFullName(e.target.value)}
+                      placeholder="Adaeze Okafor"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="direct-admin-email">Administrator Email</Label>
+                    <Input
+                      id="direct-admin-email"
+                      type="email"
+                      required
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      placeholder="principal@school.edu"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="direct-admin-password">Administrator Password</Label>
+                    <Input
+                      id="direct-admin-password"
+                      type="password"
+                      required
+                      minLength={8}
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      placeholder="Min 8 chars, letters & number"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="direct-admin-confirm">Confirm Password</Label>
+                    <Input
+                      id="direct-admin-confirm"
+                      type="password"
+                      required
+                      minLength={8}
+                      value={confirmAdminPassword}
+                      onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                      placeholder="Repeat password"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowCreateSchoolForm(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={creatingSchool}>
+                  {creatingSchool ? 'Creating School & Admin...' : 'Create School & Admin Account'}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Issue Unique School Access Code */}
       <Card className="border-blue-200 bg-white">

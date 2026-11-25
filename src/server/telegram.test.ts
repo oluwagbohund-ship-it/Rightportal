@@ -24,7 +24,12 @@ const { renderStudentIdCardPngBuffer, renderSvgToPngBuffer } = await import('./i
 const { authRouter } = await import('./routes/auth.ts');
 const { ownerRouter } = await import('./routes/owner.ts');
 const telegramRouter = (await import('./routes/telegram.ts')).default;
-const { getBotToken, getBotUsername, handleTelegramUpdate } = await import('./telegram-bot.ts');
+const {
+  getBotToken,
+  getBotUsername,
+  handleTelegramUpdate,
+  normalizeLoginIdentifier,
+} = await import('./telegram-bot.ts');
 const { createNotificationRecord } = await import('./notifications/service.ts');
 
 let simulateSetWebhook429 = false;
@@ -1105,4 +1110,75 @@ test('Interactive Telegram login supports formatted emails, card serials, single
   assert.ok(sentCalls.some((c) => c.chatId === '30003' && c.text.includes('Verified & Linked')));
   const linked30003 = db.prepare(`SELECT role FROM telegram_links WHERE telegram_chat_id = '30003'`).get() as any;
   assert.equal(linked30003?.role, 'teacher');
+});
+
+test('Platform Owner interactive login supports formatted emails and detects unclaimed owner state when schools exist', async () => {
+  assert.equal(normalizeLoginIdentifier('<mailto:owner@davetimi.test>'), 'owner@davetimi.test');
+  assert.equal(normalizeLoginIdentifier('[Owner](mailto:owner@davetimi.test)'), 'owner@davetimi.test');
+  assert.equal(normalizeLoginIdentifier('Email: "owner@davetimi.test."'), 'owner@davetimi.test');
+
+  const db = getDb();
+
+  // 1. Platform Owner logs in interactively using "Email: <email>" formatting
+  sentCalls.length = 0;
+  await handleTelegramUpdate(
+    {
+      callback_query: {
+        id: 'cb_owner_login_1',
+        from: { id: 30004, username: 'owner_interactive' },
+        message: { message_id: 301, chat: { id: 30004 } },
+        data: 'auth:start_link',
+      },
+    },
+    baseUrl,
+  );
+  await handleTelegramUpdate(
+    {
+      message: {
+        chat: { id: 30004 },
+        text: 'Email: [owner@davetimi.test](mailto:owner@davetimi.test)',
+        from: { username: 'owner_interactive' },
+      },
+    },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30004' && c.text.includes('owner@davetimi.test')));
+
+  await handleTelegramUpdate(
+    { message: { chat: { id: 30004 }, text: 'PortalPass123!', from: { username: 'owner_interactive' } } },
+    baseUrl,
+  );
+  assert.ok(sentCalls.some((c) => c.chatId === '30004' && c.text.includes('Verified & Linked')));
+  const linkedOwner = db.prepare(`SELECT role FROM telegram_links WHERE telegram_chat_id = '30004'`).get() as any;
+  assert.equal(linkedOwner?.role, 'platform_owner');
+
+  // 2. When school accounts exist (users > 0) but Platform Owner has not been claimed yet, bot clearly warns and points to /login/workers
+  const savedAssignment = db
+    .prepare(`SELECT * FROM workforce_assignments WHERE user_id = ?`)
+    .get(ids.ownerUser) as any;
+  assert.ok(savedAssignment);
+
+  try {
+    db.prepare(`DELETE FROM workforce_assignments WHERE role_id = 'role_platform_owner'`).run();
+    sentCalls.length = 0;
+    await handleTelegramUpdate(
+      { message: { chat: { id: 30005 }, text: 'unclaimed.owner@school.org', from: { username: 'new_owner' } } },
+      baseUrl,
+    );
+    const unclaimedMsg = sentCalls.find((c) => c.chatId === '30005');
+    assert.ok(unclaimedMsg);
+    assert.ok(unclaimedMsg.text.includes('No Platform Owner account is claimed in this database yet'));
+    assert.ok(unclaimedMsg.text.includes(`${baseUrl}/login/workers`));
+  } finally {
+    db.prepare(`
+      INSERT INTO workforce_assignments (id, user_id, role_id, department, clearance_level)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      savedAssignment.id,
+      savedAssignment.user_id,
+      savedAssignment.role_id,
+      savedAssignment.department,
+      savedAssignment.clearance_level,
+    );
+  }
 });

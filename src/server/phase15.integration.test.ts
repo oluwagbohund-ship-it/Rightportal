@@ -136,10 +136,12 @@ test('Database integrity check passes on initialization and rejects foreign-key 
 });
 
 test('Security headers include nosniff and do not block iframe framing', async () => {
-  const { res } = await api('/api/public/info');
+  const { res, json } = await api('/api/public/info');
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(res.headers.get('x-frame-options'), null);
+  assert.equal(json.ownerClaimed, false);
+  assert.equal(json.requireAccessCodeForSchoolRegistration, true);
 });
 
 let ownerCookie = '';
@@ -167,6 +169,10 @@ test('Auth separation, Platform Owner bootstrap, duplicate school rejection, and
   assert.equal(boot.status, 201);
   assert.ok(boot.cookie && boot.cookie.length > 20);
   ownerCookie = boot.cookie!;
+
+  const infoAfterBoot = await api('/api/public/info');
+  assert.equal(infoAfterBoot.status, 200);
+  assert.equal(infoAfterBoot.json.ownerClaimed, true);
 
   // Second bootstrap must fail
   const bootTwice = await api('/api/auth/workers/bootstrap', {
@@ -666,3 +672,115 @@ test('SQLite atomic backup and restore reliably reverts post-backup mutations', 
     .get(schoolBId) as { name: string };
   assert.equal(restoredRow.name, 'Beta High School');
 });
+
+test('Owner direct school provisioning and optional open self-registration create working Founding Admin accounts', async () => {
+  // 1. Platform Owner creates a school + Founding Admin directly
+  const ownerCreate = await api('/api/owner/schools', {
+    method: 'POST',
+    cookie: ownerCookie,
+    body: {
+      schoolName: 'Direct Provisioned Academy',
+      country: 'Nigeria',
+      city: 'Ibadan',
+      contactEmail: 'hello@directacademy.edu',
+      customCode: 'DT-DIRECT99',
+      initialStatus: 'active',
+      initialSessionName: '2026/2027 Session',
+      adminFullName: 'Bolanle Adewale',
+      adminEmail: 'bolanle@directacademy.edu',
+      adminPassword: 'DirectPassword2026',
+    },
+  });
+  assert.equal(ownerCreate.status, 201);
+  const directSchool = ownerCreate.json.school as { id: string; code: string; status: string };
+  assert.equal(directSchool.code, 'DT-DIRECT99');
+  assert.equal(directSchool.status, 'active');
+
+  // Founding Admin created by Owner can immediately log in via school portal
+  const directLogin = await api('/api/auth/school/login', {
+    method: 'POST',
+    body: {
+      schoolCode: directSchool.code,
+      email: 'bolanle@directacademy.edu',
+      password: 'DirectPassword2026',
+    },
+  });
+  assert.equal(directLogin.status, 200);
+  assert.ok(directLogin.cookie);
+
+  // 2. Owner disables access code gate so schools can self-register openly
+  const settingsGet = await api('/api/owner/settings', { cookie: ownerCookie });
+  assert.equal(settingsGet.status, 200);
+  const currentSettings = settingsGet.json as {
+    allowPublicSchoolRegistration: boolean;
+    requireAccessCodeForSchoolRegistration: boolean;
+    requireSchoolVerificationBanner: boolean;
+    sessionTtlHours: number;
+  };
+  assert.equal(currentSettings.requireAccessCodeForSchoolRegistration, true);
+
+  const disableGate = await api('/api/owner/settings', {
+    method: 'PUT',
+    cookie: ownerCookie,
+    body: {
+      allowPublicSchoolRegistration: currentSettings.allowPublicSchoolRegistration,
+      requireAccessCodeForSchoolRegistration: false,
+      requireSchoolVerificationBanner: currentSettings.requireSchoolVerificationBanner,
+      sessionTtlHours: currentSettings.sessionTtlHours,
+    },
+  });
+  assert.equal(disableGate.status, 200);
+
+  const publicInfoOpen = await api('/api/public/info');
+  assert.equal(publicInfoOpen.json.requireAccessCodeForSchoolRegistration, false);
+
+  // 3. School self-registers without an access code and gets an auto-generated DT-XXXXXX code
+  const openReg = await api('/api/public/register-school', {
+    method: 'POST',
+    body: {
+      schoolName: 'Open Self-Service High',
+      country: 'Nigeria',
+      city: 'Port Harcourt',
+      contactEmail: 'admin@openself.edu',
+      adminFullName: 'Chidi Nwosu',
+      adminEmail: 'chidi@openself.edu',
+      adminPassword: 'OpenPassword2026',
+      initialSessionName: '2026/2027 Session',
+    },
+  });
+  assert.equal(openReg.status, 201);
+  assert.ok(openReg.cookie);
+  const openSchool = openReg.json.school as { code: string; status: string };
+  assert.match(openSchool.code, /^DT-[A-Z0-9]+$/);
+
+  const openSchoolCheck = await api('/api/school/overview', { cookie: openReg.cookie! });
+  assert.equal(openSchoolCheck.status, 200);
+
+  // 4. Re-enable access code gate and verify missing accessCode is rejected again
+  const reenableGate = await api('/api/owner/settings', {
+    method: 'PUT',
+    cookie: ownerCookie,
+    body: {
+      allowPublicSchoolRegistration: currentSettings.allowPublicSchoolRegistration,
+      requireAccessCodeForSchoolRegistration: true,
+      requireSchoolVerificationBanner: currentSettings.requireSchoolVerificationBanner,
+      sessionTtlHours: currentSettings.sessionTtlHours,
+    },
+  });
+  assert.equal(reenableGate.status, 200);
+
+  const blockedWithoutCode = await api('/api/public/register-school', {
+    method: 'POST',
+    body: {
+      schoolName: 'Gate Restored Academy',
+      country: 'Nigeria',
+      city: 'Kano',
+      contactEmail: 'office@gaterestored.edu',
+      adminFullName: 'Musa Bello',
+      adminEmail: 'musa@gaterestored.edu',
+      adminPassword: 'GatePassword2026',
+    },
+  });
+  assert.equal(blockedWithoutCode.status, 400);
+});
+

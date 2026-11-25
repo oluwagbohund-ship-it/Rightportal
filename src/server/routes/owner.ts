@@ -39,7 +39,7 @@ import {
   markNotificationReadForUser,
 } from '../notifications/service.ts';
 import { listActiveRateLimitLockouts } from '../rate-limiter.ts';
-import { generateOpaqueToken, hashPassword, sha256Hex } from '../security.ts';
+import { generateOpaqueToken, hashPassword, sha256Hex, slugifySchoolName } from '../security.ts';
 import {
   revokeAllSessionsForUser,
   revokeSessionById,
@@ -50,6 +50,7 @@ import {
   createPlatformNotificationSchema,
   createSchoolAccessCodeSchema,
   createWorkforceMemberSchema,
+  ownerCreateSchoolSchema,
   restoreBackupSchema,
   updatePlatformSettingsSchema,
   updateSchoolStatusSchema,
@@ -141,6 +142,168 @@ ownerRouter.get('/schools', requirePermission('platform.schools.read'), (_req, r
 
   res.json({ schools });
 });
+
+ownerRouter.post(
+  '/schools',
+  requireCsrfCheck,
+  requirePermission('platform.schools.manage'),
+  (req: AuthenticatedRequest, res) => {
+    const parsed = ownerCreateSchoolSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: parsed.error.issues[0]?.message ?? 'Invalid school or administrator details.',
+      });
+      return;
+    }
+
+    const db = getDb();
+    const d = parsed.data;
+    const adminEmail = d.adminEmail.toLowerCase();
+    const schoolContactEmail = d.contactEmail.toLowerCase();
+    const normalizedName = d.schoolName.trim().toLowerCase();
+    const normalizedCity = d.city.trim().toLowerCase();
+    const normalizedCountry = d.country.trim().toLowerCase();
+
+    const existingUser = db
+      .prepare('SELECT id FROM users WHERE LOWER(email) = ?')
+      .get(adminEmail) as { id: string } | undefined;
+    if (existingUser) {
+      res.status(409).json({ error: 'An account with this administrator email already exists.' });
+      return;
+    }
+
+    const duplicateSchool = db
+      .prepare(`
+        SELECT id FROM schools
+        WHERE LOWER(contact_email) = ?
+           OR (LOWER(TRIM(name)) = ? AND LOWER(TRIM(city)) = ? AND LOWER(TRIM(country)) = ?)
+        LIMIT 1
+      `)
+      .get(schoolContactEmail, normalizedName, normalizedCity, normalizedCountry) as
+      | { id: string }
+      | undefined;
+    if (duplicateSchool) {
+      res.status(409).json({
+        error: 'A school with this name/location or contact email already exists.',
+      });
+      return;
+    }
+
+    let schoolCode = d.customCode ? normalizeSchoolAccessCode(d.customCode) : '';
+    if (schoolCode) {
+      const codeConflict =
+        db.prepare('SELECT id FROM school_access_codes WHERE UPPER(code) = ?').get(schoolCode) ||
+        db.prepare('SELECT id FROM schools WHERE UPPER(code) = ?').get(schoolCode);
+      if (codeConflict) {
+        res.status(409).json({
+          error: 'This School Code is already assigned or in use. Choose another or leave blank to auto-generate.',
+        });
+        return;
+      }
+    } else {
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const candidate = generateUniqueSchoolAccessCode('DT');
+        const conflict =
+          db.prepare('SELECT id FROM school_access_codes WHERE UPPER(code) = ?').get(candidate) ||
+          db.prepare('SELECT id FROM schools WHERE UPPER(code) = ?').get(candidate);
+        if (!conflict) {
+          schoolCode = candidate;
+          break;
+        }
+      }
+      if (!schoolCode) {
+        res.status(500).json({ error: 'Unable to allocate a unique School Code. Please retry.' });
+        return;
+      }
+    }
+
+    const baseSlug = slugifySchoolName(d.schoolName) || 'school';
+    const slug = `${baseSlug}-${crypto.randomBytes(2).toString('hex')}`;
+    const schoolId = `sch_${crypto.randomUUID()}`;
+    const userId = `usr_${crypto.randomUUID()}`;
+    const membershipId = `mem_${crypto.randomUUID()}`;
+    const passwordHash = hashPassword(d.adminPassword);
+    const hasSession = Boolean(d.initialSessionName && d.initialSessionName.trim().length >= 4);
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`
+        INSERT INTO schools (
+          id, name, slug, code, country, city, contact_email, phone, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        schoolId,
+        d.schoolName.trim(),
+        slug,
+        schoolCode,
+        d.country.trim(),
+        d.city.trim(),
+        schoolContactEmail,
+        d.phone ?? '',
+        d.initialStatus,
+      );
+
+      db.prepare(`
+        INSERT INTO users (id, email, full_name, password_hash, user_type, is_active)
+        VALUES (?, ?, ?, ?, 'school_member', 1)
+      `).run(userId, adminEmail, d.adminFullName.trim(), passwordHash);
+
+      db.prepare(`
+        INSERT INTO school_memberships (id, school_id, user_id, role_id, title, status)
+        VALUES (?, ?, ?, 'role_school_admin', 'Principal Administrator', 'active')
+      `).run(membershipId, schoolId, userId);
+
+      if (hasSession) {
+        const year = new Date().getFullYear();
+        db.prepare(`
+          INSERT INTO academic_sessions (
+            id, school_id, name, term, start_date, end_date, is_current
+          ) VALUES (?, ?, ?, 'First Term', ?, ?, 1)
+        `).run(
+          `acs_${crypto.randomUUID()}`,
+          schoolId,
+          d.initialSessionName!.trim(),
+          `${year}-09-01`,
+          `${year}-12-18`,
+        );
+      }
+
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error('Owner create school failed:', err);
+      res.status(500).json({ error: 'Unable to create school and administrator account.' });
+      return;
+    }
+
+    const school = db
+      .prepare(`
+        SELECT
+          s.id, s.name, s.slug, s.code, s.country, s.city, s.contact_email, s.phone, s.status, s.created_at,
+          1 AS member_count,
+          ? AS session_count
+        FROM schools s
+        WHERE s.id = ?
+      `)
+      .get(hasSession ? 1 : 0, schoolId);
+
+    recordAuditLog({
+      actorUserId: req.auth!.id,
+      actorEmail: req.auth!.email,
+      actorRole: req.auth!.roleCode,
+      schoolId,
+      authEnvironment: 'workers',
+      action: 'platform.school.created_by_owner',
+      resourceType: 'school',
+      resourceId: schoolId,
+      outcome: 'success',
+      metadata: { schoolName: d.schoolName.trim(), schoolCode, adminEmail },
+      ipAddress: getClientIp(req),
+    });
+
+    res.status(201).json({ school, adminEmail });
+  },
+);
 
 ownerRouter.patch(
   '/schools/:schoolId/status',
@@ -615,6 +778,9 @@ ownerRouter.get('/settings', requirePermission('platform.settings.manage'), (_re
 
   res.json({
     allowPublicSchoolRegistration: Boolean(settings.allow_public_school_registration ?? true),
+    requireAccessCodeForSchoolRegistration: Boolean(
+      settings.require_access_code_for_school_registration ?? true,
+    ),
     requireSchoolVerificationBanner: Boolean(settings.require_school_verification_banner ?? true),
     sessionTtlHours: Number(settings.session_ttl_hours ?? 24),
     dtAiCoreEnabled: false,
@@ -645,6 +811,11 @@ ownerRouter.put(
     upsert.run(
       'allow_public_school_registration',
       JSON.stringify(parsed.data.allowPublicSchoolRegistration),
+      req.auth!.email,
+    );
+    upsert.run(
+      'require_access_code_for_school_registration',
+      JSON.stringify(parsed.data.requireAccessCodeForSchoolRegistration),
       req.auth!.email,
     );
     upsert.run(

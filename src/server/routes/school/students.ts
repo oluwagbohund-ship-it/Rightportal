@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { getDb } from '../../../db/client.ts';
+import { buildStudentsCsvTemplate, parseStudentsCsv } from '../../../lib/student-csv.ts';
 import { recordAuditLog } from '../../audit.ts';
 import { deleteStoredFileById, saveValidatedFile } from '../../file-storage.ts';
 import {
@@ -17,6 +18,7 @@ import {
 import { hashPassword } from '../../security.ts';
 import { revokeAllSessionsForUser } from '../../session-service.ts';
 import {
+  bulkImportStudentsSchema,
   createStudentSchema,
   entityDocumentUploadSchema,
   promoteStudentSchema,
@@ -185,6 +187,522 @@ schoolStudentsRouter.get(
           .all(schoolId);
 
     res.json({ history });
+  },
+);
+
+schoolStudentsRouter.get(
+  '/students/bulk-import/template.csv',
+  requirePermission('school.students.manage'),
+  (req: AuthenticatedRequest, res) => {
+    const db = getDb();
+    const schoolId = req.auth!.activeSchoolId!;
+    const classes = db
+      .prepare(`
+        SELECT id, name
+        FROM school_classes
+        WHERE school_id = ? AND status != 'archived'
+        ORDER BY level_order ASC, name ASC
+      `)
+      .all(schoolId) as Array<{ id: string; name: string }>;
+
+    const arms = db
+      .prepare(`
+        SELECT class_id, name, status
+        FROM class_arms
+        WHERE school_id = ? AND status != 'archived'
+        ORDER BY name ASC
+      `)
+      .all(schoolId) as Array<{ class_id: string; name: string; status: string }>;
+
+    const armsByClass = new Map<string, Array<{ name: string; status: string }>>();
+    for (const arm of arms) {
+      const list = armsByClass.get(arm.class_id) ?? [];
+      list.push({ name: arm.name, status: arm.status });
+      armsByClass.set(arm.class_id, list);
+    }
+
+    const csv = buildStudentsCsvTemplate(
+      classes.map((c) => ({ name: c.name, arms: armsByClass.get(c.id) ?? [] })),
+    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="students-import-template.csv"');
+    res.send(csv);
+  },
+);
+
+schoolStudentsRouter.post(
+  '/students/bulk-import',
+  requireCsrfCheck,
+  requirePermission('school.students.manage'),
+  (req: AuthenticatedRequest, res) => {
+    const parsed = bulkImportStudentsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid bulk import request.' });
+      return;
+    }
+
+    const db = getDb();
+    const schoolId = req.auth!.activeSchoolId!;
+    const d = parsed.data;
+
+    let defaultClassRow: { id: string; name: string; status: string; capacity: number } | null = null;
+    let defaultArmRow: { id: string; name: string; class_id: string; status: string; capacity: number } | null =
+      null;
+
+    if (d.defaultClassId) {
+      const check = validateActiveClassAndArm({
+        schoolId,
+        classId: d.defaultClassId,
+        armId: d.defaultArmId || null,
+      });
+      if (!check.ok || !check.classRow) {
+        res.status(400).json({ error: check.error || 'Invalid default class selection.' });
+        return;
+      }
+      defaultClassRow = check.classRow;
+      defaultArmRow = check.armRow ?? null;
+    } else if (d.defaultArmId) {
+      res.status(400).json({ error: 'Select a default class before choosing a default arm.' });
+      return;
+    }
+
+    const parsedCsv = parseStudentsCsv(d.csvContent, {
+      defaultAdmissionDate: d.defaultAdmissionDate || undefined,
+    });
+    if (parsedCsv.fileErrors.length > 0) {
+      res.status(400).json({
+        error: parsedCsv.fileErrors[0],
+        fileErrors: parsedCsv.fileErrors,
+        missingRequiredColumns: parsedCsv.missingRequiredColumns,
+      });
+      return;
+    }
+
+    // Load tenant classes, arms, and active occupancy snapshots
+    const classRows = db
+      .prepare(`SELECT id, name, code, status, capacity FROM school_classes WHERE school_id = ?`)
+      .all(schoolId) as Array<{ id: string; name: string; code: string; status: string; capacity: number }>;
+
+    const armRows = db
+      .prepare(`SELECT id, class_id, name, status, capacity FROM class_arms WHERE school_id = ?`)
+      .all(schoolId) as Array<{ id: string; class_id: string; name: string; status: string; capacity: number }>;
+
+    const classOccupancyRows = db
+      .prepare(`
+        SELECT current_class_id AS class_id, COUNT(*) AS cnt
+        FROM students
+        WHERE school_id = ? AND status = 'active' AND current_class_id IS NOT NULL
+        GROUP BY current_class_id
+      `)
+      .all(schoolId) as Array<{ class_id: string; cnt: number }>;
+
+    const armOccupancyRows = db
+      .prepare(`
+        SELECT current_arm_id AS arm_id, COUNT(*) AS cnt
+        FROM students
+        WHERE school_id = ? AND status = 'active' AND current_arm_id IS NOT NULL
+        GROUP BY current_arm_id
+      `)
+      .all(schoolId) as Array<{ arm_id: string; cnt: number }>;
+
+    const classOccupiedMap = new Map<string, number>(classOccupancyRows.map((r) => [r.class_id, r.cnt]));
+    const armOccupiedMap = new Map<string, number>(armOccupancyRows.map((r) => [r.arm_id, r.cnt]));
+    const projectedClassAdds = new Map<string, number>();
+    const projectedArmAdds = new Map<string, number>();
+
+    const seenAdmNumbers = new Set<string>();
+    const seenLoginEmails = new Set<string>();
+
+    const existingAdmStmt = db.prepare(
+      `SELECT id FROM students WHERE school_id = ? AND UPPER(admission_number) = UPPER(?) LIMIT 1`,
+    );
+    const existingUserEmailStmt = db.prepare(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1`,
+    );
+
+    interface EvaluatedBulkStudentRow {
+      rowNumber: number;
+      status: 'valid' | 'error';
+      issues: string[];
+      firstName: string;
+      middleName: string;
+      lastName: string;
+      dateOfBirth: string;
+      gender: 'Male' | 'Female' | 'Other' | '';
+      admissionNumber: string;
+      admissionDate: string;
+      studentEmail: string;
+      studentPhone: string;
+      residentialAddress: string;
+      nationality: string;
+      stateOfOrigin: string;
+      previousSchool: string;
+      classId: string | null;
+      className: string;
+      armId: string | null;
+      armName: string;
+      emergencyContactName: string;
+      emergencyContactPhone: string;
+      emergencyContactRelationship: string;
+      createLogin: boolean;
+      portalPassword: string;
+    }
+
+    const evaluatedRows: EvaluatedBulkStudentRow[] = parsedCsv.rows.map((row) => {
+      const issues = [...row.localIssues];
+
+      // Admission number uniqueness (DB + intra-CSV)
+      if (row.admissionNumber) {
+        const admUpper = row.admissionNumber.toUpperCase();
+        if (seenAdmNumbers.has(admUpper)) {
+          issues.push(`Duplicate admission number "${row.admissionNumber}" within CSV`);
+        } else if (existingAdmStmt.get(schoolId, row.admissionNumber)) {
+          issues.push(`Admission number "${row.admissionNumber}" already exists in school`);
+        }
+      }
+
+      // Resolve target class & arm
+      let resolvedClass: { id: string; name: string; status: string; capacity: number } | null = null;
+      let resolvedArm: { id: string; name: string; class_id: string; status: string; capacity: number } | null =
+        null;
+
+      if (row.className) {
+        const needle = row.className.trim().toLowerCase();
+        const foundClass = classRows.find(
+          (c) => c.name.trim().toLowerCase() === needle || c.code.trim().toLowerCase() === needle || c.id === row.className,
+        );
+        if (!foundClass) {
+          issues.push(`Class "${row.className}" was not found in your school`);
+        } else if (foundClass.status === 'archived') {
+          issues.push(`Class "${foundClass.name}" is archived`);
+        } else {
+          resolvedClass = foundClass;
+        }
+      } else if (defaultClassRow) {
+        resolvedClass = defaultClassRow;
+      }
+
+      if (row.armName) {
+        if (!resolvedClass) {
+          issues.push(`Arm "${row.armName}" cannot be assigned without a valid class`);
+        } else {
+          const armNeedle = row.armName.trim().toLowerCase();
+          const foundArm = armRows.find(
+            (a) =>
+              a.class_id === resolvedClass!.id &&
+              (a.name.trim().toLowerCase() === armNeedle || a.id === row.armName),
+          );
+          if (!foundArm) {
+            issues.push(`Arm "${row.armName}" not found under class ${resolvedClass.name}`);
+          } else if (foundArm.status === 'archived') {
+            issues.push(`Arm "${foundArm.name}" is archived`);
+          } else {
+            resolvedArm = foundArm;
+          }
+        }
+      } else if (!row.className && defaultArmRow && resolvedClass?.id === defaultArmRow.class_id) {
+        resolvedArm = defaultArmRow;
+      }
+
+      // Capacity check (projected across batch)
+      if (resolvedArm) {
+        const used = (armOccupiedMap.get(resolvedArm.id) ?? 0) + (projectedArmAdds.get(resolvedArm.id) ?? 0);
+        if (used >= resolvedArm.capacity) {
+          issues.push(`Arm ${resolvedClass?.name ?? ''} (${resolvedArm.name}) capacity (${resolvedArm.capacity}) reached`);
+        }
+      } else if (resolvedClass) {
+        const used =
+          (classOccupiedMap.get(resolvedClass.id) ?? 0) + (projectedClassAdds.get(resolvedClass.id) ?? 0);
+        if (used >= resolvedClass.capacity) {
+          issues.push(`Class ${resolvedClass.name} capacity (${resolvedClass.capacity}) reached`);
+        }
+      }
+
+      // Portal login determination
+      const createLogin =
+        row.createPortalLogin !== null
+          ? row.createPortalLogin
+          : Boolean(d.createPortalLogins && row.studentEmail);
+
+      if (createLogin) {
+        if (!row.studentEmail) {
+          issues.push('Student email is required when creating a portal login');
+        } else {
+          const emailLower = row.studentEmail.toLowerCase();
+          if (seenLoginEmails.has(emailLower)) {
+            issues.push(`Duplicate student email "${row.studentEmail}" within CSV`);
+          } else if (existingUserEmailStmt.get(emailLower)) {
+            issues.push(`Email "${row.studentEmail}" already has a portal account`);
+          }
+        }
+      }
+
+      const valid = issues.length === 0;
+      if (valid) {
+        if (row.admissionNumber) seenAdmNumbers.add(row.admissionNumber.toUpperCase());
+        if (createLogin && row.studentEmail) seenLoginEmails.add(row.studentEmail.toLowerCase());
+        if (resolvedClass) {
+          projectedClassAdds.set(resolvedClass.id, (projectedClassAdds.get(resolvedClass.id) ?? 0) + 1);
+        }
+        if (resolvedArm) {
+          projectedArmAdds.set(resolvedArm.id, (projectedArmAdds.get(resolvedArm.id) ?? 0) + 1);
+        }
+      }
+
+      return {
+        rowNumber: row.rowNumber,
+        status: valid ? 'valid' : 'error',
+        issues,
+        firstName: row.firstName,
+        middleName: row.middleName,
+        lastName: row.lastName,
+        dateOfBirth: row.dateOfBirth,
+        gender: row.gender,
+        admissionNumber: row.admissionNumber,
+        admissionDate: row.admissionDate,
+        studentEmail: row.studentEmail,
+        studentPhone: row.studentPhone,
+        residentialAddress: row.residentialAddress,
+        nationality: row.nationality,
+        stateOfOrigin: row.stateOfOrigin,
+        previousSchool: row.previousSchool,
+        classId: resolvedClass?.id ?? null,
+        className: resolvedClass?.name ?? 'Unassigned',
+        armId: resolvedArm?.id ?? null,
+        armName: resolvedArm?.name ?? '',
+        emergencyContactName: row.emergencyContactName,
+        emergencyContactPhone: row.emergencyContactPhone,
+        emergencyContactRelationship: row.emergencyContactRelationship,
+        createLogin,
+        portalPassword: row.portalPassword,
+      };
+    });
+
+    const validRows = evaluatedRows.filter((r) => r.status === 'valid');
+    const errorRows = evaluatedRows.filter((r) => r.status === 'error');
+
+    if (d.mode === 'preview') {
+      res.json({
+        mode: 'preview',
+        summary: {
+          totalRows: evaluatedRows.length,
+          validCount: validRows.length,
+          errorCount: errorRows.length,
+          loginsToCreateCount: validRows.filter((r) => r.createLogin).length,
+        },
+        recognizedColumns: parsedCsv.recognizedColumns,
+        unknownHeaders: parsedCsv.unknownHeaders,
+        rows: evaluatedRows.map(({ portalPassword: _pw, ...publicRow }) => ({
+          ...publicRow,
+          hasCustomPassword: Boolean(_pw),
+        })),
+      });
+      return;
+    }
+
+    // Commit mode
+    if (!d.skipInvalidRows && errorRows.length > 0) {
+      res.status(400).json({
+        error: `${errorRows.length} CSV row(s) have validation issues. Fix them or choose to skip invalid rows.`,
+        summary: {
+          totalRows: evaluatedRows.length,
+          validCount: validRows.length,
+          errorCount: errorRows.length,
+        },
+        errors: errorRows.map((r) => ({ rowNumber: r.rowNumber, issues: r.issues })),
+      });
+      return;
+    }
+
+    if (validRows.length === 0) {
+      res.status(400).json({
+        error: 'No valid student rows are available to import.',
+        summary: {
+          totalRows: evaluatedRows.length,
+          validCount: 0,
+          errorCount: errorRows.length,
+        },
+        errors: errorRows.map((r) => ({ rowNumber: r.rowNumber, issues: r.issues })),
+      });
+      return;
+    }
+
+    const currentSession = db
+      .prepare('SELECT id FROM academic_sessions WHERE school_id = ? AND is_current = 1 LIMIT 1')
+      .get(schoolId) as { id: string } | undefined;
+
+    const insertUserStmt = db.prepare(`
+      INSERT INTO users (id, email, full_name, password_hash, user_type, is_active)
+      VALUES (?, ?, ?, ?, 'school_member', 1)
+    `);
+    const insertMemStmt = db.prepare(`
+      INSERT INTO school_memberships (id, school_id, user_id, role_id, title, status)
+      VALUES (?, ?, ?, 'role_student', ?, 'active')
+    `);
+    const insertStudentStmt = db.prepare(`
+      INSERT INTO students (
+        id, school_id, user_id, admission_number, admission_date,
+        first_name, middle_name, last_name, date_of_birth, gender,
+        student_email, student_phone, residential_address, nationality, state_of_origin, previous_school,
+        current_class_id, current_arm_id,
+        emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `);
+    const insertEnrollStmt = db.prepare(`
+      INSERT INTO class_enrollments (id, school_id, student_id, class_id, arm_id, academic_session_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'active')
+    `);
+    const insertHistoryStmt = db.prepare(`
+      INSERT INTO student_class_history (
+        id, school_id, student_id, academic_session_id,
+        from_class_id, from_arm_id, to_class_id, to_arm_id,
+        action_type, effective_date, notes, recorded_by_user_id
+      ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, 'initial_placement', ?, 'Bulk CSV student import', ?)
+    `);
+
+    const imported: Array<{
+      rowNumber: number;
+      id: string;
+      admissionNumber: string;
+      fullName: string;
+      className: string;
+      armName: string;
+      studentEmail: string;
+      loginCreated: boolean;
+      temporaryPassword: string | null;
+    }> = [];
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of validRows) {
+        const studentId = `stu_${crypto.randomUUID()}`;
+        const assignedAdmissionNumber = row.admissionNumber
+          ? row.admissionNumber
+          : allocateUniqueAdmissionNumber(schoolId, row.admissionDate);
+
+        let linkedUserId: string | null = null;
+        let issuedTempPassword: string | null = null;
+        const fullName = [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
+
+        if (row.createLogin && row.studentEmail) {
+          linkedUserId = `usr_${crypto.randomUUID()}`;
+          const rawPass =
+            row.portalPassword && row.portalPassword.length >= 8
+              ? row.portalPassword
+              : `Stu-${crypto.randomBytes(4).toString('hex')}!`;
+          issuedTempPassword = rawPass;
+
+          insertUserStmt.run(
+            linkedUserId,
+            row.studentEmail.toLowerCase(),
+            fullName,
+            hashPassword(rawPass),
+          );
+          insertMemStmt.run(`mem_${crypto.randomUUID()}`, schoolId, linkedUserId, assignedAdmissionNumber);
+        }
+
+        insertStudentStmt.run(
+          studentId,
+          schoolId,
+          linkedUserId,
+          assignedAdmissionNumber,
+          row.admissionDate,
+          row.firstName,
+          row.middleName,
+          row.lastName,
+          row.dateOfBirth,
+          row.gender,
+          row.studentEmail.toLowerCase(),
+          row.studentPhone,
+          row.residentialAddress,
+          row.nationality,
+          row.stateOfOrigin,
+          row.previousSchool,
+          row.classId,
+          row.armId,
+          row.emergencyContactName,
+          row.emergencyContactPhone,
+          row.emergencyContactRelationship,
+        );
+
+        if (row.classId) {
+          insertEnrollStmt.run(
+            `enr_${crypto.randomUUID()}`,
+            schoolId,
+            studentId,
+            row.classId,
+            row.armId,
+            currentSession?.id ?? null,
+          );
+          insertHistoryStmt.run(
+            `sch_${crypto.randomUUID()}`,
+            schoolId,
+            studentId,
+            currentSession?.id ?? null,
+            row.classId,
+            row.armId,
+            row.admissionDate,
+            req.auth!.id,
+          );
+        }
+
+        imported.push({
+          rowNumber: row.rowNumber,
+          id: studentId,
+          admissionNumber: assignedAdmissionNumber,
+          fullName,
+          className: row.className,
+          armName: row.armName,
+          studentEmail: row.studentEmail.toLowerCase(),
+          loginCreated: Boolean(linkedUserId),
+          temporaryPassword: issuedTempPassword,
+        });
+      }
+
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error('Bulk import students failed:', err);
+      res.status(500).json({ error: 'Unable to complete student bulk import.' });
+      return;
+    }
+
+    const loginsCreatedCount = imported.filter((r) => r.loginCreated).length;
+
+    recordAuditLog({
+      actorUserId: req.auth!.id,
+      actorEmail: req.auth!.email,
+      actorRole: req.auth!.roleCode,
+      schoolId,
+      authEnvironment: 'school',
+      action: 'school.student.bulk_imported',
+      resourceType: 'student',
+      resourceId: imported[0]?.id ?? null,
+      outcome: 'success',
+      metadata: {
+        totalRows: evaluatedRows.length,
+        importedCount: imported.length,
+        skippedCount: errorRows.length,
+        loginsCreatedCount,
+      },
+      ipAddress: getClientIp(req),
+    });
+
+    res.status(201).json({
+      mode: 'commit',
+      summary: {
+        totalRows: evaluatedRows.length,
+        importedCount: imported.length,
+        skippedCount: errorRows.length,
+        loginsCreatedCount,
+      },
+      imported,
+      errors: errorRows.map((r) => ({
+        rowNumber: r.rowNumber,
+        fullName: [r.firstName, r.lastName].filter(Boolean).join(' ') || `Row ${r.rowNumber}`,
+        issues: r.issues,
+      })),
+    });
   },
 );
 

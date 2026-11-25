@@ -16,36 +16,38 @@ export function WorkersLoginPage() {
   const navigate = useNavigate();
 
   const [statusLoading, setStatusLoading] = useState(true);
-  const [ownerClaimed, setOwnerClaimed] = useState(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [ownerClaimed, setOwnerClaimed] = useState<boolean>(false);
   const [requiresBootstrapKey, setRequiresBootstrapKey] = useState(false);
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [bootstrapKey, setBootstrapKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const checkBootstrapStatus = async () => {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const res = await apiRequest<{ ownerClaimed: boolean; requiresBootstrapKey: boolean }>(
+        '/api/auth/workers/bootstrap-status',
+      );
+      setOwnerClaimed(res.ownerClaimed);
+      setRequiresBootstrapKey(res.requiresBootstrapKey);
+    } catch (err) {
+      setStatusError(
+        err instanceof Error ? err.message : 'Unable to check Platform Owner account status.',
+      );
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
   useEffect(() => {
-    let active = true;
-    apiRequest<{ ownerClaimed: boolean; requiresBootstrapKey: boolean }>(
-      '/api/auth/workers/bootstrap-status',
-    )
-      .then((res) => {
-        if (!active) return;
-        setOwnerClaimed(res.ownerClaimed);
-        setRequiresBootstrapKey(res.requiresBootstrapKey);
-      })
-      .catch(() => {
-        if (!active) return;
-        setOwnerClaimed(true);
-      })
-      .finally(() => {
-        if (active) setStatusLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+    void checkBootstrapStatus();
   }, []);
 
   if (!authLoading && user && user.authEnvironment === 'workers') {
@@ -73,6 +75,14 @@ export function WorkersLoginPage() {
   const handleBootstrap = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (password.length < 10 || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+      setError('Owner password must be at least 10 characters and include an uppercase letter and a number.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match. Please confirm your Platform Owner password.');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await apiRequest<{ redirectPath: string }>('/api/auth/workers/bootstrap', {
@@ -99,11 +109,14 @@ export function WorkersLoginPage() {
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8 text-xs text-slate-400">
           <Logo variant="white" size="xs" />
           <div className="flex items-center gap-4">
-            <Link to="/login/school" className="hidden sm:inline hover:text-white transition-colors">
+            <Link to="/register" className="hover:text-white transition-colors">
+              Register School
+            </Link>
+            <Link to="/login/school" className="hover:text-white transition-colors">
               School Portal Login
             </Link>
-            <Link to="/" className="hover:text-white transition-colors">
-              Return to Public Site
+            <Link to="/" className="hidden sm:inline hover:text-white transition-colors">
+              Public Site
             </Link>
           </div>
         </div>
@@ -125,7 +138,7 @@ export function WorkersLoginPage() {
                 Dave Timi EdTech Workers Console
               </h1>
               <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-lg">
-                Authorized internal operations workspace for managing school tenants, issuing onboarding codes, configuring the universal Telegram bot, and auditing platform security.
+                Authorized internal operations workspace for creating schools, issuing onboarding codes, configuring the universal Telegram bot, and auditing platform security.
               </p>
             </div>
 
@@ -155,12 +168,19 @@ export function WorkersLoginPage() {
                 <CardContent className="p-6 text-sm text-slate-500">
                   Checking workforce environment status...
                 </CardContent>
+              ) : statusError ? (
+                <CardContent className="p-6 space-y-3">
+                  <Alert variant="error">{statusError}</Alert>
+                  <Button type="button" variant="outline" onClick={() => void checkBootstrapStatus()}>
+                    Retry Status Check
+                  </Button>
+                </CardContent>
               ) : !ownerClaimed ? (
                 <>
                   <CardHeader>
-                    <CardTitle>Initialize Platform Owner</CardTitle>
+                    <CardTitle>Create First Platform Owner Account</CardTitle>
                     <CardDescription>
-                      No Platform Owner account has been claimed yet. Create the founding owner credentials to lock bootstrap initialization.
+                      No Platform Owner account exists yet. Create the founding owner credentials to unlock the Owner Console and manage schools.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -179,7 +199,7 @@ export function WorkersLoginPage() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label htmlFor="owner-email">Workforce Email</Label>
+                        <Label htmlFor="owner-email">Platform Owner Email</Label>
                         <Input
                           id="owner-email"
                           type="email"
@@ -191,9 +211,7 @@ export function WorkersLoginPage() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label htmlFor="owner-password">
-                          Password (min 10 chars, 1 uppercase, 1 number)
-                        </Label>
+                        <Label htmlFor="owner-password">Password</Label>
                         <Input
                           id="owner-password"
                           type="password"
@@ -202,6 +220,22 @@ export function WorkersLoginPage() {
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           placeholder="Create Platform Owner password"
+                        />
+                        <p className="text-[11px] text-slate-500">
+                          At least 10 characters, including 1 uppercase letter and 1 number.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="owner-confirm-password">Confirm Password</Label>
+                        <Input
+                          id="owner-confirm-password"
+                          type="password"
+                          required
+                          minLength={10}
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="Re-enter your password"
                         />
                       </div>
 
@@ -220,7 +254,7 @@ export function WorkersLoginPage() {
                       ) : null}
 
                       <Button type="submit" variant="navy" className="w-full" disabled={submitting}>
-                        {submitting ? 'Initializing Owner Access...' : 'Claim Platform Owner Access'}
+                        {submitting ? 'Creating Platform Owner...' : 'Create Platform Owner Account'}
                       </Button>
                     </form>
                   </CardContent>

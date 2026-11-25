@@ -2,7 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { Router } from 'express';
 import { getDb } from '../../db/client.ts';
-import { evaluateAccessCodeStatus, normalizeSchoolAccessCode } from '../access-code-helpers.ts';
+import {
+  evaluateAccessCodeStatus,
+  generateUniqueSchoolAccessCode,
+  normalizeSchoolAccessCode,
+} from '../access-code-helpers.ts';
 import { getAiCoreBlueprint } from '../ai-core.ts';
 import { recordAuditLog } from '../audit.ts';
 import { resolveConfinedStoragePath, type StoredFileRecord } from '../file-storage.ts';
@@ -18,6 +22,7 @@ import { createAuthSession } from '../session-service.ts';
 import {
   contactInquirySchema,
   createAdmissionSchema,
+  openRegisterSchoolSchema,
   registerSchoolSchema,
   verifyAccessCodeSchema,
 } from '../validation.ts';
@@ -39,12 +44,36 @@ publicRouter.get('/info', (_req, res) => {
     }
   }
 
+  const codeSettingRow = db
+    .prepare("SELECT value_json FROM platform_settings WHERE key = 'require_access_code_for_school_registration'")
+    .get() as { value_json: string } | undefined;
+
+  let requireAccessCodeForSchoolRegistration = true;
+  if (codeSettingRow) {
+    try {
+      requireAccessCodeForSchoolRegistration = Boolean(JSON.parse(codeSettingRow.value_json));
+    } catch {
+      requireAccessCodeForSchoolRegistration = true;
+    }
+  }
+
+  const ownerRow = db
+    .prepare(`
+      SELECT COUNT(*) AS count
+      FROM workforce_assignments wa
+      INNER JOIN roles r ON r.id = wa.role_id
+      WHERE r.code = 'platform_owner'
+    `)
+    .get() as { count: number };
+
   res.json({
     platformName: 'Dave Timi EdTech Systems',
     developer: 'David Oluwagbohun',
     tagline: 'Build • Innovate • Transform',
     phase: 'Version 1 — Complete Multi-School Production Release',
     allowPublicSchoolRegistration,
+    requireAccessCodeForSchoolRegistration,
+    ownerClaimed: (ownerRow?.count ?? 0) > 0,
     aiCore: getAiCoreBlueprint(),
   });
 });
@@ -462,7 +491,24 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
     return;
   }
 
-  const parsed = registerSchoolSchema.safeParse(req.body);
+  const codeSetting = db
+    .prepare("SELECT value_json FROM platform_settings WHERE key = 'require_access_code_for_school_registration'")
+    .get() as { value_json: string } | undefined;
+  let requireAccessCode = true;
+  if (codeSetting) {
+    try {
+      requireAccessCode = Boolean(JSON.parse(codeSetting.value_json));
+    } catch {
+      requireAccessCode = true;
+    }
+  }
+
+  const hasSubmittedAccessCode =
+    typeof req.body?.accessCode === 'string' && req.body.accessCode.trim().length > 0;
+  const parsed =
+    requireAccessCode || hasSubmittedAccessCode
+      ? registerSchoolSchema.safeParse(req.body)
+      : openRegisterSchoolSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
       error: parsed.error.issues[0]?.message ?? 'Invalid registration payload.',
@@ -471,7 +517,7 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
   }
 
   const data = parsed.data;
-  const normalizedAccessCode = normalizeSchoolAccessCode(data.accessCode);
+  const normalizedAccessCode = data.accessCode ? normalizeSchoolAccessCode(data.accessCode) : '';
   const adminEmail = data.adminEmail.toLowerCase();
   const schoolContactEmail = data.contactEmail.toLowerCase();
   const normalizedSchoolName = data.schoolName.trim().toLowerCase();
@@ -531,39 +577,62 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
 
   db.exec('BEGIN IMMEDIATE');
   try {
-    const codeRow = db
-      .prepare(`
-        SELECT id, code, status, expires_at
-        FROM school_access_codes
-        WHERE UPPER(code) = ?
-        LIMIT 1
-      `)
-      .get(normalizedAccessCode) as
-      | { id: string; code: string; status: string; expires_at: string | null }
-      | undefined;
+    if (normalizedAccessCode) {
+      const codeRow = db
+        .prepare(`
+          SELECT id, code, status, expires_at
+          FROM school_access_codes
+          WHERE UPPER(code) = ?
+          LIMIT 1
+        `)
+        .get(normalizedAccessCode) as
+        | { id: string; code: string; status: string; expires_at: string | null }
+        | undefined;
 
-    const codeEval = evaluateAccessCodeStatus(codeRow);
-    if (!codeEval.valid || !codeRow) {
-      db.exec('ROLLBACK');
-      recordAuditLog({
-        actorEmail: adminEmail,
-        actorRole: 'public_visitor',
-        authEnvironment: 'public',
-        action: 'school.registration.access_code_rejected',
-        resourceType: 'school_access_code',
-        resourceId: codeRow?.id ?? '',
-        outcome: 'denied',
-        metadata: { attemptedCode: normalizedAccessCode, reason: codeEval.reason },
-        ipAddress: ip,
-      });
-      res.status(403).json({
-        error: codeEval.reason ?? 'Invalid Platform Owner School Access Code.',
-      });
-      return;
+      const codeEval = evaluateAccessCodeStatus(codeRow);
+      if (!codeEval.valid || !codeRow) {
+        db.exec('ROLLBACK');
+        recordAuditLog({
+          actorEmail: adminEmail,
+          actorRole: 'public_visitor',
+          authEnvironment: 'public',
+          action: 'school.registration.access_code_rejected',
+          resourceType: 'school_access_code',
+          resourceId: codeRow?.id ?? '',
+          outcome: 'denied',
+          metadata: { attemptedCode: normalizedAccessCode, reason: codeEval.reason },
+          ipAddress: ip,
+        });
+        res.status(403).json({
+          error: codeEval.reason ?? 'Invalid Platform Owner School Access Code.',
+        });
+        return;
+      }
+
+      accessCodeId = codeRow.id;
+      schoolCode = codeRow.code.toUpperCase();
+    } else {
+      let generated = '';
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const candidate = generateUniqueSchoolAccessCode('DT');
+        const existsInCodes = db
+          .prepare('SELECT id FROM school_access_codes WHERE UPPER(code) = ?')
+          .get(candidate);
+        const existsInSchools = db
+          .prepare('SELECT id FROM schools WHERE UPPER(code) = ?')
+          .get(candidate);
+        if (!existsInCodes && !existsInSchools) {
+          generated = candidate;
+          break;
+        }
+      }
+      if (!generated) {
+        db.exec('ROLLBACK');
+        res.status(500).json({ error: 'Unable to allocate a unique School Code. Please retry.' });
+        return;
+      }
+      schoolCode = generated;
     }
-
-    accessCodeId = codeRow.id;
-    schoolCode = codeRow.code.toUpperCase();
 
     const codeConflict = db
       .prepare('SELECT id FROM schools WHERE UPPER(code) = ?')
@@ -615,11 +684,13 @@ publicRouter.post('/register-school', requireCsrfCheck, (req, res) => {
       );
     }
 
-    db.prepare(`
-      UPDATE school_access_codes
-      SET status = 'used', used_by_school_id = ?, used_at = datetime('now')
-      WHERE id = ?
-    `).run(schoolId, accessCodeId);
+    if (accessCodeId) {
+      db.prepare(`
+        UPDATE school_access_codes
+        SET status = 'used', used_by_school_id = ?, used_at = datetime('now')
+        WHERE id = ?
+      `).run(schoolId, accessCodeId);
+    }
 
     db.exec('COMMIT');
   } catch (err) {
