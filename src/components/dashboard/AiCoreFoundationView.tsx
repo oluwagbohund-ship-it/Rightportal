@@ -2,6 +2,7 @@ import React from 'react';
 import { Cpu, PauseCircle } from 'lucide-react';
 import { Alert } from '../ui/alert.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card.tsx';
+import { AiAssistantCopilot } from './AiAssistantCopilot.tsx';
 import type { AiCoreBlueprint } from '../../types/app.ts';
 
 interface AiCoreFoundationViewProps {
@@ -31,6 +32,8 @@ export function AiCoreFoundationView({
 
   return (
     <div className="space-y-6">
+      <AiAssistantCopilot />
+
       <Alert variant="info" title={`${blueprint.engineName} — ${blueprint.architecturePhase}`}>
         AI inference, predictive scoring, and automated administrative generation are intentionally disabled in Phase 1. Module boundaries and permission gates are established here for Phase 2 and Phase 3 activation.
       </Alert>
