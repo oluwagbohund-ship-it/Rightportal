@@ -48,10 +48,10 @@ export function AiAssistantCopilot() {
     setMessages((prev) => [...prev, userMsg]);
     setInputVal('');
     setLoading(true);
+    setStreamingText('');
 
     // Simulate intelligent bot response with ChatGPT-style streaming typing effect
     setTimeout(() => {
-      setLoading(false);
       let fullResponse = '';
       const lower = query.toLowerCase();
 
@@ -70,7 +70,6 @@ export function AiAssistantCopilot() {
 
       // ChatGPT style streaming word-by-word / character-by-character typing effect
       let charIndex = 0;
-      setStreamingText('');
       const botMsgId = `bot_${Date.now()}`;
 
       const interval = setInterval(() => {
@@ -79,6 +78,7 @@ export function AiAssistantCopilot() {
           charIndex++;
         } else {
           clearInterval(interval);
+          setLoading(false);
           setStreamingText('');
           setMessages((prev) => [
             ...prev,
@@ -90,8 +90,8 @@ export function AiAssistantCopilot() {
             },
           ]);
         }
-      }, 16); // Smooth typing speed
-    }, 1100);
+      }, 14); // Smooth typing speed
+    }, 800);
   };
 
   const handleQuickPrompt = (prompt: string) => {
@@ -155,31 +155,28 @@ export function AiAssistantCopilot() {
             </div>
           ))}
 
-          {/* Active Streaming Text */}
-          {streamingText ? (
+          {/* Active Generation & Streaming with Persistent Typing Indicator */}
+          {loading ? (
             <div className="flex items-start gap-2.5">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-xs">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-xs animate-pulse">
                 <Bot className="h-4 w-4" />
               </div>
-              <div className="max-w-[80%] rounded-2xl rounded-tl-none bg-slate-100 px-4 py-3 text-xs leading-relaxed text-[#0F172A] border border-slate-200/60 shadow-xs">
-                <p className="whitespace-pre-wrap">{streamingText}</p>
-                <span className="inline-block h-3 w-1.5 ml-0.5 bg-blue-600 animate-pulse" />
-              </div>
-            </div>
-          ) : null}
-
-          {/* Loading Indicator ("Moving something" / Bouncing Dots) */}
-          {loading && !streamingText ? (
-            <div className="flex items-start gap-2.5">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-xs animate-bounce">
-                <Bot className="h-4 w-4" />
-              </div>
-              <div className="rounded-2xl rounded-tl-none bg-slate-100 px-4 py-3 text-xs text-slate-600 border border-slate-200/60 flex items-center gap-2">
-                <span className="font-medium text-[#1E3A8A]">DT Copilot is thinking</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-blue-600 animate-bounce [animation-delay:-0.3s]" />
-                  <span className="h-2 w-2 rounded-full bg-blue-600 animate-bounce [animation-delay:-0.15s]" />
-                  <span className="h-2 w-2 rounded-full bg-blue-600 animate-bounce" />
+              <div className="max-w-[80%] rounded-2xl rounded-tl-none bg-slate-100 px-4 py-3 text-xs leading-relaxed text-[#0F172A] border border-slate-200/60 shadow-xs space-y-2.5">
+                {streamingText ? (
+                  <p className="whitespace-pre-wrap">
+                    {streamingText}
+                    <span className="inline-block h-3 w-1.5 ml-0.5 bg-blue-600 animate-pulse" />
+                  </p>
+                ) : null}
+                <div className="flex items-center gap-2 pt-1 border-t border-slate-200/60">
+                  <span className="text-[11px] font-medium text-[#1E3A8A]">
+                    {streamingText ? 'DT Copilot is generating response...' : 'DT Copilot is thinking'}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-blue-600 animate-bounce [animation-delay:-0.3s]" />
+                    <span className="h-2 w-2 rounded-full bg-blue-600 animate-bounce [animation-delay:-0.15s]" />
+                    <span className="h-2 w-2 rounded-full bg-blue-600 animate-bounce" />
+                  </div>
                 </div>
               </div>
             </div>
