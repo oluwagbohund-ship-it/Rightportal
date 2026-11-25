@@ -1182,3 +1182,54 @@ test('Platform Owner interactive login supports formatted emails and detects unc
     );
   }
 });
+
+test('Telegram /setupowner command initializes platform owner when none exists', async () => {
+  const db = getDb();
+  const savedAssignment = db
+    .prepare(`SELECT * FROM workforce_assignments WHERE role_id = 'role_platform_owner'`)
+    .get() as any;
+
+  try {
+    db.prepare(`DELETE FROM workforce_assignments WHERE role_id = 'role_platform_owner'`).run();
+    sentCalls.length = 0;
+    await handleTelegramUpdate(
+      { message: { chat: { id: 30006 }, text: '/setupowner', from: { username: 'setup_owner' } } },
+      baseUrl,
+    );
+    const setupMsg = sentCalls.find((c) => c.chatId === '30006');
+    assert.ok(setupMsg);
+    assert.ok(setupMsg.text.includes('Platform Owner Initial Setup'));
+
+    await handleTelegramUpdate(
+      { message: { chat: { id: 30006 }, text: 'new.owner@davetimi.test', from: { username: 'setup_owner' } } },
+      baseUrl,
+    );
+    await handleTelegramUpdate(
+      { message: { chat: { id: 30006 }, text: 'SecurePass123!', from: { username: 'setup_owner' } } },
+      baseUrl,
+    );
+    await handleTelegramUpdate(
+      { message: { chat: { id: 30006 }, text: 'New Owner Name', from: { username: 'setup_owner' } } },
+      baseUrl,
+    );
+
+    const successMsg = sentCalls.find((c) => c.chatId === '30006' && c.text.includes('Successfully Initialized'));
+    assert.ok(successMsg);
+
+    const newOwnerLink = db.prepare(`SELECT role FROM telegram_links WHERE telegram_chat_id = '30006'`).get() as any;
+    assert.equal(newOwnerLink?.role, 'platform_owner');
+  } finally {
+    db.prepare(`DELETE FROM workforce_assignments WHERE role_id = 'role_platform_owner'`).run();
+    db.prepare(`
+      INSERT INTO workforce_assignments (id, user_id, role_id, department, clearance_level)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      savedAssignment.id,
+      savedAssignment.user_id,
+      savedAssignment.role_id,
+      savedAssignment.department,
+      savedAssignment.clearance_level,
+    );
+  }
+});
+

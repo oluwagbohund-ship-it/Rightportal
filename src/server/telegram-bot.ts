@@ -3826,6 +3826,95 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           return;
         }
       }
+
+      if (state.step === 'awaiting_owner_email') {
+        const email = text.trim().toLowerCase();
+        if (!email.includes('@') || !email.includes('.')) {
+          await sendTelegramMessage(chatId, `❌ Please enter a valid email address (e.g. \`owner@school.org\`):`);
+          return;
+        }
+        setChatState(chatId, 'awaiting_owner_password', { email });
+        await sendTelegramMessage(
+          chatId,
+          `👑 *Platform Owner Initial Setup (Step 2/3)*\n\n🔑 Enter a secure password for your owner account:`,
+        );
+        return;
+      }
+
+      if (state.step === 'awaiting_owner_password') {
+        const password = text.trim();
+        if (password.length < 6) {
+          await sendTelegramMessage(chatId, `❌ Password should be at least 6 characters long. Please try again:`);
+          return;
+        }
+        setChatState(chatId, 'awaiting_owner_name', { ...state.payload, password });
+        await sendTelegramMessage(
+          chatId,
+          `👑 *Platform Owner Initial Setup (Step 3/3)*\n\n👤 Enter your *Full Name* (e.g. David Owner):`,
+        );
+        return;
+      }
+
+      if (state.step === 'awaiting_owner_name') {
+        const fullName = text.trim();
+        const email = String(state.payload.email || '');
+        const password = String(state.payload.password || '');
+        if (!fullName) {
+          await sendTelegramMessage(chatId, `❌ Please provide your full name:`);
+          return;
+        }
+
+        const db = getDb();
+        const countRow = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM workforce_assignments wa
+          INNER JOIN roles r ON r.id = wa.role_id
+          WHERE r.code = 'platform_owner'
+        `).get() as { count: number };
+
+        if ((countRow?.count ?? 0) > 0) {
+          clearChatState(chatId);
+          await sendTelegramMessage(chatId, `⚠️ A Platform Owner account has already been claimed.`);
+          return;
+        }
+
+        const userId = `usr_${crypto.randomUUID()}`;
+        const assignmentId = `wrk_${crypto.randomUUID()}`;
+        const passwordHash = hashPassword(password);
+
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          db.prepare(`
+            INSERT INTO users (id, email, full_name, password_hash, user_type, is_active)
+            VALUES (?, ?, ?, ?, 'workforce', 1)
+          `).run(userId, email, fullName, passwordHash);
+
+          db.prepare(`
+            INSERT INTO workforce_assignments (id, user_id, role_id, department, clearance_level)
+            VALUES (?, ?, 'role_platform_owner', 'Executive Platform Architecture', 'owner')
+          `).run(assignmentId, userId);
+
+          db.exec('COMMIT');
+        } catch (err) {
+          db.exec('ROLLBACK');
+          clearChatState(chatId);
+          await sendTelegramMessage(chatId, `❌ Failed to initialize Platform Owner: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          return;
+        }
+
+        const ctx = resolveUserAccountContext(userId);
+        if (ctx) {
+          saveTelegramLink(chatId, username, ctx);
+          clearChatState(chatId);
+          await sendTelegramMessage(
+            chatId,
+            `👑 *Platform Owner Successfully Initialized & Linked!*\nWelcome *${ctx.fullName}* (${ctx.summaryLabel}). You now have full platform administrative control.`,
+          );
+          const link = getTelegramLink(chatId)!;
+          await sendRoleDashboardWelcome(chatId, link);
+          return;
+        }
+      }
     } else {
       // No active state: if user is unlinked and directly types a DTID QR, email, or email+password, handle login smoothly
       const existingLink = getTelegramLink(chatId);
@@ -3955,6 +4044,7 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
         chatId,
         `🤖 *Portal Bot Commands*\n\n` +
           `• \`/link <email_or_id> <password>\` — Verify & connect portal account\n` +
+          `• \`/setupowner\` — Claim & set up first Platform Owner account (if none exists)\n` +
           `• \`/idlogin <DTID-...>\` — Student Digital ID login\n` +
           `• \`/login\` — 1-click sign-in link to your web portal\n` +
           `• \`/regstudent [name]\` — Register student + passport photo + Digital ID\n` +
@@ -3965,6 +4055,80 @@ export async function handleTelegramUpdate(update: any, requestBaseUrl?: string)
           `• \`/attendance\`, \`/results\`, \`/fees\`, \`/idcard\`, \`/wards\`, \`/classes\`, \`/overview\`\n` +
           `• \`/status\` & \`/unlink\``,
         { inlineKeyboard: buildUnlinkedKeyboard() },
+      );
+      return;
+    }
+
+    case '/setupowner': {
+      const db = getDb();
+      const countRow = db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM workforce_assignments wa
+        INNER JOIN roles r ON r.id = wa.role_id
+        WHERE r.code = 'platform_owner'
+      `).get() as { count: number };
+
+      if ((countRow?.count ?? 0) > 0) {
+        await sendTelegramMessage(
+          chatId,
+          `⚠️ A Platform Owner account has already been claimed on this server. Please sign in normally using /link or at the web portal.`,
+        );
+        return;
+      }
+
+      const ownerArgs = args.join(' ').trim();
+      if (ownerArgs) {
+        const parts = ownerArgs.split(/\s+/);
+        if (parts.length >= 2) {
+          const email = parts[0].toLowerCase();
+          const password = parts[1];
+          const fullName = parts.slice(2).join(' ') || 'Platform Owner';
+          if (!email.includes('@')) {
+            await sendTelegramMessage(chatId, `❌ Please provide a valid email address for the Platform Owner.`);
+            return;
+          }
+          const userId = `usr_${crypto.randomUUID()}`;
+          const assignmentId = `wrk_${crypto.randomUUID()}`;
+          const passwordHash = hashPassword(password);
+
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            db.prepare(`
+              INSERT INTO users (id, email, full_name, password_hash, user_type, is_active)
+              VALUES (?, ?, ?, ?, 'workforce', 1)
+            `).run(userId, email, fullName, passwordHash);
+
+            db.prepare(`
+              INSERT INTO workforce_assignments (id, user_id, role_id, department, clearance_level)
+              VALUES (?, ?, 'role_platform_owner', 'Executive Platform Architecture', 'owner')
+            `).run(assignmentId, userId);
+
+            db.exec('COMMIT');
+          } catch (err) {
+            db.exec('ROLLBACK');
+            await sendTelegramMessage(chatId, `❌ Failed to create Platform Owner account: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            return;
+          }
+
+          const ctx = resolveUserAccountContext(userId);
+          if (ctx) {
+            saveTelegramLink(chatId, username, ctx);
+            clearChatState(chatId);
+            await sendTelegramMessage(
+              chatId,
+              `👑 *Platform Owner Successfully Initialized!*\nWelcome *${ctx.fullName}* (${ctx.summaryLabel}). You now have full platform administrative control.`,
+            );
+            const link = getTelegramLink(chatId)!;
+            await sendRoleDashboardWelcome(chatId, link);
+            return;
+          }
+        }
+      }
+
+      setChatState(chatId, 'awaiting_owner_email');
+      await sendTelegramMessage(
+        chatId,
+        `👑 *Platform Owner Initial Setup (Step 1/3)*\n\nNo Platform Owner is claimed in this database yet. Let's create your first Platform Owner account.\n\nPlease enter your desired *Owner Email* (or send \`/cancel\`):`,
       );
       return;
     }
