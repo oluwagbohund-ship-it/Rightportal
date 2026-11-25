@@ -107,6 +107,21 @@ async function startServer() {
   const port = Number(process.env.APP_PORT || (process.env.PORT && process.env.PORT !== '8080' ? process.env.PORT : 3000));
   app.listen(port, '0.0.0.0', () => {
     console.log(`Dave Timi EdTech Systems running on http://0.0.0.0:${port}`);
+
+    // Anti-sleep keep-alive self-ping for free hosting platforms (like Render free tier spinning down after 15 mins)
+    const selfUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL || `http://127.0.0.1:${port}`;
+    const pingIntervalMs = 10 * 60 * 1000; // Ping every 10 minutes (before 15-minute Render sleep threshold)
+    setInterval(() => {
+      fetch(`${selfUrl}/api/health`)
+        .then((res) => {
+          if (!res.ok) {
+            console.warn(`Keep-alive self-ping warning: status ${res.status}`);
+          }
+        })
+        .catch((err) => {
+          console.debug('Keep-alive ping notice:', err instanceof Error ? err.message : err);
+        });
+    }, pingIntervalMs);
   });
 }
 
