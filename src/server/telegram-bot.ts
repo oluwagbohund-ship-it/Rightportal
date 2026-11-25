@@ -153,6 +153,26 @@ export function getPortalBaseUrl(overrideBaseUrl?: string): string {
   return raw.replace(/\/$/, '');
 }
 
+export async function sendChatAction(
+  chatId: string | number,
+  action: string = 'typing',
+): Promise<boolean> {
+  const token = getBotToken();
+  if (!token) {
+    return true;
+  }
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action }),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function sendTelegramMessage(
   chatId: string | number,
   text: string,
@@ -163,6 +183,9 @@ export async function sendTelegramMessage(
     return true;
   }
   try {
+    // Send typing action to show moving/loading status in Telegram chat
+    await sendChatAction(chatId, 'typing');
+
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
     const body: Record<string, unknown> = {
       chat_id: chatId,
